@@ -6,6 +6,7 @@ Pure module: no network, no filesystem, no clock.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 
 POSITIONS = ("QB", "RB", "WR", "TE", "K", "DEF")
@@ -19,9 +20,14 @@ def normalize_name(name: str) -> str:
 
     Two sources with unrelated ID spaces are matched on this plus position,
     so it must survive punctuation, casing, spacing, and generational
-    suffixes.
+    suffixes. Diacritics are transliterated rather than dropped -- sources
+    disagree on whether "Pineiro" carries an accent, so both must reduce to
+    the same plain-ASCII key.
     """
-    lowered = name.lower().strip()
+    ascii_name = (
+        unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    )
+    lowered = ascii_name.lower().strip()
     words = [_NON_ALPHA.sub("", w) for w in lowered.split()]
     words = [w for w in words if w]
     while words and words[-1] in _SUFFIXES:

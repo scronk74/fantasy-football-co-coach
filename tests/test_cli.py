@@ -1,0 +1,86 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from ffcoach.cli import main
+
+FIXTURES = Path(__file__).parent / "fixtures"
+LEAGUE = """
+name: Test League
+season: 2026
+teams: 12
+scoring: ppr
+my_pick: 7
+roster: {QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, K: 1, DEF: 1, BN: 6}
+"""
+
+
+@pytest.fixture
+def workspace(tmp_path):
+    (tmp_path / "league.yaml").write_text(LEAGUE)
+    cache_db = tmp_path / "c.sqlite3"
+
+    from ffcoach.cache import Cache
+    from ffcoach.sources.ffcalc import _cache_key
+    from ffcoach.sources.sleeper import CACHE_KEY
+
+    cache = Cache(cache_db)
+    cache.set(_cache_key("ppr", 12, 2026), (FIXTURES / "ffc_ppr_12.json").read_text(), 3600)
+    cache.set(CACHE_KEY, (FIXTURES / "sleeper_players.json").read_text(), 3600)
+    return tmp_path
+
+
+def test_build_writes_the_board(workspace):
+    out = workspace / "web" / "data" / "board.json"
+    code = main([
+        "build",
+        "--config", str(workspace / "league.yaml"),
+        "--cache", str(workspace / "c.sqlite3"),
+        "--out", str(out),
+    ])
+    assert code == 0
+    payload = json.loads(out.read_text())
+    assert payload["schema_version"] == 1
+    assert payload["players"]
+    assert payload["league"]["next_pick"] == 18
+
+
+def test_build_ranks_players_from_one(workspace):
+    out = workspace / "board.json"
+    main([
+        "build",
+        "--config", str(workspace / "league.yaml"),
+        "--cache", str(workspace / "c.sqlite3"),
+        "--out", str(out),
+    ])
+    ranks = [r["rank"] for r in json.loads(out.read_text())["players"]]
+    assert ranks == list(range(1, len(ranks) + 1))
+
+
+def test_missing_config_exits_nonzero_with_a_clear_message(tmp_path, capsys):
+    code = main([
+        "build",
+        "--config", str(tmp_path / "absent.yaml"),
+        "--cache", str(tmp_path / "c.sqlite3"),
+        "--out", str(tmp_path / "b.json"),
+    ])
+    assert code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_doctor_reports_config_and_cache(workspace, capsys):
+    code = main([
+        "doctor",
+        "--config", str(workspace / "league.yaml"),
+        "--cache", str(workspace / "c.sqlite3"),
+    ])
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Test League" in out
+    assert "ppr" in out
+
+
+def test_unknown_command_exits_nonzero(capsys):
+    with pytest.raises(SystemExit):
+        main(["nonsense"])

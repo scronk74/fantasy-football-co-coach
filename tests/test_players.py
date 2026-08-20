@@ -14,6 +14,8 @@ from ffcoach.model.players import POSITIONS, Player, normalize_name
         ("Marvin Harrison Jr", "marvinharrison"),
         ("Amon-Ra St. Brown", "amonrastbrown"),
         ("  Bijan Robinson  ", "bijanrobinson"),
+        ("Eddy Pineiro", "eddypineiro"),
+        ("Eddy Piñeiro", "eddypineiro"),
     ],
 )
 def test_normalize_name(raw, expected):

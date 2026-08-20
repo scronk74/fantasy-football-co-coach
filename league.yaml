@@ -1,0 +1,29 @@
+# Copy to league.yaml and replace with your league's real settings.
+# Ask your commissioner for the scoring breakdown and roster rules.
+
+name: My League
+season: 2026
+
+# How many teams. Determines how deep the talent pool goes.
+teams: 12
+
+# Scoring format. This matters a lot: PPR awards a point per reception,
+# which moves receivers and pass-catching running backs up the board.
+#   standard  - no points for receptions
+#   half-ppr  - 0.5 per reception
+#   ppr       - 1.0 per reception
+scoring: ppr
+
+# Your draft slot, 1 through <teams>.
+my_pick: 7
+
+# Starting lineup plus bench. FLEX accepts RB/WR/TE.
+roster:
+  QB: 1
+  RB: 2
+  WR: 2
+  TE: 1
+  FLEX: 1
+  K: 1
+  DEF: 1
+  BN: 6
