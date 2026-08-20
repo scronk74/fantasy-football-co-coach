@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ffcoach
+web/data/
+*.sqlite3
+.venv/
