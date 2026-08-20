@@ -890,7 +890,7 @@ def assign_tiers(players: Sequence[Player], gap_multiplier: float = 1.5) -> list
 - [ ] **Step 4: Run and watch it pass**
 
 Run: `uv run pytest tests/test_tiers.py -v`
-Expected: PASS, 8 passed.
+Expected: PASS, 7 passed.
 
 - [ ] **Step 5: Commit**
 
