@@ -107,7 +107,7 @@ addopts = "-q"
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test web/"
+    "test": "node --test web/*.test.js"
   }
 }
 ```
