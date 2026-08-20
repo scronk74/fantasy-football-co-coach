@@ -221,3 +221,6 @@ __marimo__/
 web/data/
 *.sqlite3
 .venv/
+
+# personal, not template — edit your own after copying league.example.yaml
+league.yaml
