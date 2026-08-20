@@ -1079,7 +1079,7 @@ def availability_text(a: str, pick: int) -> str:
 - [ ] **Step 4: Run and watch it pass**
 
 Run: `uv run pytest tests/test_value.py -v`
-Expected: PASS, 15 passed.
+Expected: PASS, 12 passed.
 
 - [ ] **Step 5: Commit**
 
