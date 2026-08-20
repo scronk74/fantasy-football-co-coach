@@ -37,6 +37,9 @@ requirements.
 - **Season timing.** Spec written 2026-08-20. Draft expected within 2–4 weeks;
   Week 1 roughly three weeks out.
 - **iPhone** for notifications.
+- **Toolchain.** Python 3.12 via `uv`; the system Python is 3.7 and unusable.
+  Node 26 installed for its built-in test runner only — no npm packages are
+  installed, and none are shipped to the browser.
 
 ## Architecture
 
@@ -79,7 +82,9 @@ src/ffcoach/
   config.py            league settings, scoring rules, paths
   cache.py             SQLite cache with per-source TTLs
   sources/             external data in
-    sleeper.py           player database, ADP, trending adds/drops
+    ffcalc.py            ADP with stdev, by scoring format and team count
+    sleeper.py           player database, injury status, trending adds/drops
+    match.py             joins FFC and Sleeper records on name/position/team
     nflverse.py          historical stats, schedules, snap counts
     projections.py       weekly projections (Phase 2)
   leagues/             the user's team in
@@ -96,9 +101,13 @@ src/ffcoach/
   notify/              email · ntfy · sms_gateway · pushover
   cli.py               ffcoach <command> --json
 web/
-  index.html  app.js  style.css
+  index.html
+  render.js            pure functions — all logic, unit-tested
+  render.test.js       node --test
+  main.js              thin DOM wiring only
+  style.css
   data/                generated, gitignored
-tests/
+tests/                 pytest
 ```
 
 ### Design rules
@@ -115,13 +124,25 @@ tests/
 
 ## Data sources
 
-All free, no authentication, no API keys.
+All free, no authentication, no API keys. Verified working 2026-08-20.
 
 | Source | Provides | Used by |
 |---|---|---|
-| Sleeper API | Player database, injury designations, ADP, trending adds/drops | Draft, waivers, lineup |
+| Fantasy Football Calculator | ADP with standard deviation, high/low, bye week, by scoring format and team count | Draft |
+| Sleeper API | Player database (12k players), injury status, depth chart, trending adds/drops | Draft, waivers, lineup |
 | nflverse | Historical stats, schedules, snap counts, target share | Projections, adjustments |
 | ESPN public JSON | Weekly projections | Lineup, waivers |
+
+**ADP comes from Fantasy Football Calculator, not Sleeper.** Sleeper exposes no
+public aggregate-ADP endpoint. FFC does:
+`https://fantasyfootballcalculator.com/api/v1/adp/{format}?teams={n}&year={yyyy}`
+where format is `standard`, `half-ppr`, or `ppr`. It returns `adp`, `stdev`,
+`high`, `low`, `times_drafted`, and `bye` per player. The `stdev` field is what
+makes a real availability calculation possible rather than a guess.
+
+Player identity is joined between the two sources on normalized name plus
+position plus team, since their IDs are unrelated. Unmatched players are
+reported, never silently dropped.
 
 `ffcoach refresh` populates the SQLite cache from all sources. Each source
 declares its own TTL; player metadata refreshes slowly, injury status quickly.
@@ -190,6 +211,12 @@ Two views:
 Both views carry the **explain-mode toggle** described in the UX requirements.
 Off by default; state persisted in `localStorage`.
 
+**The draft board recomputes live.** The user marks players off as they are
+drafted, and availability, tier counts, and the recommended pick update
+immediately. This depends on browser state that Python cannot precompute, so
+this logic lives in JavaScript and is unit-tested there. Marked players persist
+in `localStorage` so an accidental refresh mid-draft does not lose the board.
+
 `ffcoach report --standalone` inlines the JSON into a single self-contained HTML
 file that opens over `file://` and can be AirDropped to a phone.
 
@@ -210,7 +237,7 @@ invoking the CLI as a fallback. Alerts fire only when something needs attention.
 
 | Phase | Delivers | Depends on | Target |
 |---|---|---|---|
-| **1** | Draft strategy — tiers, targets, round plan, draft board page | Sleeper ADP, config | Before the draft |
+| **1** | Draft strategy — tiers, targets, round plan, draft board page | FFC ADP, Sleeper players, config | Before the draft |
 | **2** | Lineup + waiver advisors, dashboard, notifications | Manual adapter, projections | Before Week 1 |
 | **3** | Trade evaluation, season strategy | Full league rosters | In-season |
 | **4** | Platform scraper — removes manual roster entry | Platform resolved | Whenever |
@@ -223,23 +250,60 @@ Each phase ships something usable on its own.
 
 **The implementation plan that follows this spec covers Phase 1 only.** Later
 phases get their own plans once Phase 1 is working and the league is confirmed.
-Phase 1 scope is: config system, SQLite cache, Sleeper source, scoring and tier
-models, the draft advisor, and the draft board page with explain mode. No
-notifications, no roster adapter, no projections.
+
+Phase 1 scope: config system, SQLite cache, the FFC and Sleeper sources plus
+their join, the tier and value models, the draft advisor, the JSON report
+writer, the CLI, and the draft board page with explain mode and live recompute.
+
+Explicitly **not** in Phase 1: notifications, the roster adapter, weekly
+projections, and `model/scoring.py`. Scoring converts stat lines into fantasy
+points, and Phase 1 has no stat lines — it ranks on ADP, which the source
+already returns per scoring format. The scoring model arrives with projections
+in Phase 2.
 
 ## Testing
 
+**Every module ships with tests from the first task.** There is no untested
+layer, including the browser code.
+
+### Toolchain
+
+- **Python 3.12**, pinned through `uv`. The system Python is 3.7 and is not
+  used.
+- **pytest** for the Python side.
+- **`node --test`**, Node's built-in runner, for the browser side. No npm
+  packages are installed and none are shipped to the browser; Node exists purely
+  to execute tests.
+
+### Python
+
 - `model/` — unit tests over fixed fixtures. Scoring, tiers, and replacement
   value are pure functions with known inputs and known outputs.
-- `sources/` — recorded HTTP fixtures. No live network in tests.
+- `sources/` — recorded HTTP fixtures committed to the repo. No live network in
+  tests, so the suite is deterministic and works offline.
 - `leagues/` — the `manual` adapter is tested against sample YAML; contract tests
   run against every adapter implementation so scrapers added later must satisfy
   the same interface.
-- `advisors/` — given a fixture roster and fixture player data, assert the
-  expected findings appear. Bye weeks, injuries, and out-projected starters are
-  each a case.
+- `advisors/` — given fixture roster and player data, assert the expected
+  findings appear. Bye weeks, injuries, and out-projected starters are each a
+  case.
+- `report/` — assert the emitted JSON matches the documented schema, so the
+  browser's contract is enforced on the Python side.
 - `notify/` — a fake notifier asserts message content and that alerts fire only
   when findings exist.
+
+### JavaScript
+
+`web/` is split so that logic is testable and DOM wiring is trivial:
+
+- `render.js` — pure functions, exported as ES modules. Row rendering, filtering,
+  sorting, tier banding, explain-mode annotation, live availability recompute.
+  No DOM access.
+- `main.js` — thin DOM wiring and event listeners. Imports `render.js`.
+- `render.test.js` — `node --test` against `render.js`.
+
+The rule: **if it computes, it lives in `render.js` and has a test; if it touches
+the DOM, it lives in `main.js` and stays trivial enough to read.**
 
 ## Error handling
 
