@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ffcoach.advisors.draft import BoardRow
 from ffcoach.config import LeagueConfig
+from ffcoach.leagues.base import League
 
 SCHEMA_VERSION = 1
 
@@ -39,6 +40,45 @@ def board_payload(
             "rounds": config.rounds,
         },
         "players": [dataclasses.asdict(row) for row in rows],
+    }
+
+
+def league_payload(
+    league: League,
+    generated_at: str,
+    stale_seconds: float | None,
+) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": generated_at,
+        "stale": stale_seconds is not None,
+        "stale_seconds": stale_seconds,
+        "league": {"name": league.name, "season": league.season},
+        "teams": [
+            {
+                "team_id": t.team_id,
+                "name": t.name,
+                "owner": t.owner,
+                "wins": t.wins,
+                "losses": t.losses,
+                "ties": t.ties,
+                "record": t.record,
+                "points_for": t.points_for,
+                "points_against": t.points_against,
+                "is_user_team": t.is_user_team,
+                "roster": [
+                    {
+                        "player_name": e.player_name,
+                        "position": e.position,
+                        "nfl_team": e.nfl_team,
+                        "lineup_slot": e.lineup_slot,
+                        "is_starter": e.is_starter,
+                    }
+                    for e in t.roster
+                ],
+            }
+            for t in league.teams
+        ],
     }
 
 

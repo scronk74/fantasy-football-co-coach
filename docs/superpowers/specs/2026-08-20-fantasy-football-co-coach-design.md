@@ -30,9 +30,13 @@ requirements.
 
 ## Constraints
 
-- **Platform unknown.** The league was assumed to be CBS Sports, but this is
-  unconfirmed. CBS has no public fantasy API; access would require authenticated
-  scraping, which is brittle. The design must not depend on resolving this.
+- **Platform: ESPN** (resolved 2026-08-28; was deliberately deferred at first
+  because the league invite hadn't arrived). ESPN's fantasy API is
+  unofficial and community reverse-engineered -- no docs, no API key.
+  Private leagues (the common case) need the `espn_s2`/`SWID` session
+  cookies pulled from a logged-in browser; there is no refresh endpoint, so
+  an auth failure is surfaced as its own error rather than retried. See
+  `src/ffcoach/leagues/espn_client.py` and `espn.example.yaml`.
 - **Free data only.** No FantasyPros, no paid projection feeds.
 - **Season timing.** Spec written 2026-08-20. Draft expected within 2–4 weeks;
   Week 1 roughly three weeks out.
@@ -63,17 +67,16 @@ This split also controls token cost. Raw player data is fetched and cached by
 scripts; the skill receives a compact JSON summary rather than a multi-megabyte
 payload.
 
-### The manual league adapter
+### The league adapter
 
-`LeagueAdapter` is an interface with several implementations. The first is
-`manual`, which reads the roster from a local YAML file the user fills in once
-after the draft.
-
-Every advisor runs against that interface and does not know or care where the
-roster came from. **The entire product is therefore functional without solving
-platform access.** A CBS or Sleeper scraper becomes a convenience upgrade that
-saves ten minutes a week, not a prerequisite. The project's largest unknown is
-removed from the critical path.
+`LeagueAdapter` is a protocol (`fetch_league() -> League`) so that report
+building and the UI never import a specific platform. `espn.py` /
+`espn_client.py` is the first and, for now, only implementation. Its parser
+was built and fully tested against a hand-built fixture matching ESPN's
+documented (unofficial) JSON shape, before the league invite arrived --
+`ffcoach league --fixture ...` demonstrates the whole page with zero ESPN
+access. The fixture gets replaced with a real captured response, and the
+parser re-verified, once the league is actually joined.
 
 ### Package layout
 
@@ -88,9 +91,9 @@ src/ffcoach/
     nflverse.py          historical stats, schedules, snap counts
     projections.py       weekly projections (Phase 2)
   leagues/             the user's team in
-    base.py              LeagueAdapter protocol
-    manual.py            YAML file — works day one
-    sleeper.py  cbs.py   scrapers, later
+    base.py              internal model (League, Team, RosterEntry) + LeagueAdapter protocol
+    espn.py              ESPN JSON -> internal model (pure; the one speculative module)
+    espn_client.py        authenticated fetch, cache, EspnAuthError
   model/               pure functions, no I/O, no clock
     scoring.py           stat line + league rules -> fantasy points
     tiers.py             rankings -> tiers with meaningful gaps
@@ -101,10 +104,10 @@ src/ffcoach/
   notify/              email · ntfy · sms_gateway · pushover
   cli.py               ffcoach <command> --json
 web/
-  index.html
-  render.js            pure functions — all logic, unit-tested
-  render.test.js       node --test
-  main.js              thin DOM wiring only
+  index.html  league.html      one page per view
+  nav.js                       shared site nav, driven by one PAGES list
+  render.js  league_render.js  pure functions — all logic, unit-tested
+  main.js  league_main.js      thin DOM wiring only
   style.css
   data/                generated, gitignored
 tests/                 pytest
@@ -131,6 +134,7 @@ All free, no authentication, no API keys. Verified working 2026-08-20.
 | Fantasy Football Calculator | ADP with standard deviation, high/low, bye week, by scoring format and team count | Draft |
 | Sleeper API | Player database (12k players), injury status, depth chart, trending adds/drops | Draft, waivers, lineup |
 | nflverse | Historical stats, schedules, snap counts, target share | Projections, adjustments |
+| ESPN Fantasy API (unofficial, cookie auth) | League settings, teams, rosters | League/roster view, later lineup and waivers |
 | ESPN public JSON | Weekly projections | Lineup, waivers |
 
 **ADP comes from Fantasy Football Calculator, not Sleeper.** Sleeper exposes no
@@ -198,18 +202,26 @@ the browser. No build step, no framework, no restart.
 Live Server is required rather than opening the file directly because `file://`
 blocks `fetch()` of local JSON under CORS.
 
-Two views:
+Three views, more expected over time (lineup, waivers, trades):
 
 - **Draft board** — one ranked list in overall value order, tier breaks across
   it, position filters, and columns for rank, ADP, value, and availability at
   next pick. **Value** is `ADP − our rank`: positive means he is lasting later
   than the consensus expects, which is the signal worth acting on.
+- **My League** — every team's record, points for/against, and roster (starters
+  vs. bench/IR), sourced from the ESPN adapter. Your own team is pinned to the
+  top and visually marked.
 - **Weekly dashboard** — attention list on the left ordered by severity, current
   lineup on the right with problem slots highlighted, suggested pickups, and a
   preview of the notification text.
 
-Both views carry the **explain-mode toggle** described in the UX requirements.
-Off by default; state persisted in `localStorage`.
+Every page shares a small nav bar (`web/nav.js`) driven by one `PAGES` list, so
+adding a future section is one entry, not a per-page markup hunt.
+
+The draft board carries the **explain-mode toggle** described in the UX
+requirements (off by default, state persisted in `localStorage`); newer views
+adopt the same annotation pattern as they gain content worth explaining. My
+League is deliberately plain today -- team/roster facts, not judgment calls.
 
 **The draft board recomputes live.** The user marks players off as they are
 drafted, and availability, tier counts, and the recommended pick update
@@ -237,29 +249,68 @@ invoking the CLI as a fallback. Alerts fire only when something needs attention.
 
 | Phase | Delivers | Depends on | Target |
 |---|---|---|---|
-| **1** | Draft strategy — tiers, targets, round plan, draft board page | FFC ADP, Sleeper players, config | Before the draft |
-| **2** | Lineup + waiver advisors, dashboard, notifications | Manual adapter, projections | Before Week 1 |
+| **1** ✅ | Draft strategy — tiers, targets, round plan, draft board page | FFC ADP, Sleeper players, config | Before the draft |
+| **1.5** ✅ | ESPN league adapter, internal league model, My League page (teams + rosters), shared site nav | Platform resolved (ESPN) | — |
+| **1.6** | Validate the ESPN parser against a real league; replace the hand-built fixture; fill in `espn.yaml` | **League invite** | Whenever invited |
+| **2** | Lineup + waiver advisors, dashboard, notifications with per-type on/off toggles, smack talk delivery | Real rosters, projections | Before Week 1 |
 | **3** | Trade evaluation, season strategy | Full league rosters | In-season |
-| **4** | Platform scraper — removes manual roster entry | Platform resolved | Whenever |
 
-Phase 1 is deliberately first: it is the most time-constrained, it depends on
-neither the platform adapter nor weekly projections, and it forces the data layer
-and config system to be built anyway.
+Phase 1 was deliberately first: it is the most time-constrained, it depends on
+neither the league adapter nor weekly projections, and it forces the data layer
+and config system to be built anyway. Phase 1.5 followed once the platform
+question resolved, ahead of schedule relative to the original Phase 4 slot,
+because it unblocks nothing else and stands alone.
 
 Each phase ships something usable on its own.
-
-**The implementation plan that follows this spec covers Phase 1 only.** Later
-phases get their own plans once Phase 1 is working and the league is confirmed.
 
 Phase 1 scope: config system, SQLite cache, the FFC and Sleeper sources plus
 their join, the tier and value models, the draft advisor, the JSON report
 writer, the CLI, and the draft board page with explain mode and live recompute.
 
-Explicitly **not** in Phase 1: notifications, the roster adapter, weekly
-projections, and `model/scoring.py`. Scoring converts stat lines into fantasy
-points, and Phase 1 has no stat lines — it ranks on ADP, which the source
-already returns per scoring format. The scoring model arrives with projections
-in Phase 2.
+Phase 1.5 scope: `leagues/base.py` (internal model + `LeagueAdapter`
+protocol), `leagues/espn_client.py` (cookie auth, cache, `EspnAuthError`),
+`leagues/espn.py` (parser, tested only against a fixture until a real league
+confirms it), `report/build.py::league_payload`, the `ffcoach league`
+subcommand (with a `--fixture` escape hatch needing no ESPN access), and
+`web/league.html` + `web/league_render.js`.
+
+Explicitly deferred past Phase 1.5, recorded here rather than acted on yet:
+
+- **Smack talk.** League-wide broadcast lines about the week's worst
+  decisions and outcomes (never personal attributes) -- sharp but friendly,
+  delivered via notification/email/web. Needs real rosters and completed
+  weeks to have anything to talk about, so it waits for Phase 2.
+- **Per-alert notification toggles.** The user wants independent on/off
+  switches for at least: injury alerts, bye-week-in-lineup, bench-upgrade
+  suggestions, trade offers, and smack talk. Agreed shape:
+
+  ```yaml
+  notifications:
+    channels:
+      push: ntfy          # or pushover
+      email: <address>
+    alerts:
+      injury:         {enabled: true, channel: push,  urgency: high}
+      bye_in_lineup:  {enabled: true, channel: push,  urgency: high}
+      bench_upgrade:  {enabled: true, channel: push,  urgency: normal}
+      trade_offer:    {enabled: true, channel: email, urgency: low}
+      smack_talk:     {enabled: true, channel: email, urgency: low}
+      espn_auth:      {enabled: true, channel: push,  urgency: high}
+  ```
+
+  `espn_auth` fires on `EspnAuthError` -- ESPN cookies break unpredictably
+  with no documented lifetime, so that exception is defined now as the future
+  hook, even though nothing consumes it yet. Building the toggle schema
+  itself waits until there's a notifier to wire it into.
+
+Explicitly not yet built at all: weekly projections, and `model/scoring.py`.
+Scoring converts stat lines into fantasy points, and nothing built so far has
+stat lines to convert — Phase 1 ranks on ADP (which the source already
+returns per scoring format), and Phase 1.5 shows rosters, not scores. The
+scoring model arrives with projections in Phase 2. It may also need
+`LeagueConfig.scoring`'s coarse `standard`/`half-ppr`/`ppr` enum to grow into
+a real per-stat table, if the league turns out to use custom scoring —
+deferred until real ESPN settings JSON is in hand rather than guessed at now.
 
 ## Testing
 
@@ -281,9 +332,12 @@ layer, including the browser code.
   value are pure functions with known inputs and known outputs.
 - `sources/` — recorded HTTP fixtures committed to the repo. No live network in
   tests, so the suite is deterministic and works offline.
-- `leagues/` — the `manual` adapter is tested against sample YAML; contract tests
-  run against every adapter implementation so scrapers added later must satisfy
-  the same interface.
+- `leagues/` — `base.py` is tested directly (record formatting, starter/bench
+  classification, protocol conformance). `espn.py` is tested against a
+  hand-built fixture matching ESPN's documented shape, marked in the fixture
+  itself as unverified against a live league until Phase 1.6 confirms it.
+  `espn_client.py` is tested with a mocked HTTP transport, same pattern as
+  `sources/ffcalc.py` and `sources/sleeper.py`.
 - `advisors/` — given fixture roster and player data, assert the expected
   findings appear. Bye weeks, injuries, and out-projected starters are each a
   case.
@@ -316,10 +370,10 @@ the DOM, it lives in `main.js` and stays trivial enough to read.**
 
 ## Open questions
 
-- **Which platform hosts the league.** Deliberately deferred; the manual adapter
-  makes it non-blocking. Revisit before Phase 4.
-- **League settings.** Scoring, roster slots, and team count are unknown until
-  the league is confirmed. Config file with commented defaults; the user fills it
-  in. Phase 1 cannot produce accurate rankings until scoring is known, since PPR
-  and standard scoring rank players differently.
+- **League settings.** Scoring, roster slots, and team count are still
+  placeholder defaults in `league.yaml` until the league is confirmed and the
+  user is invited. Once invited, ESPN's `mSettings` view (already fetched by
+  `leagues/espn_client.py`) may be able to populate these automatically,
+  rather than the user retyping a points breakdown -- worth revisiting in
+  Phase 1.6 alongside the fixture-vs-live parser verification.
 - **Carrier**, needed if the email-to-SMS gateway channel is chosen.

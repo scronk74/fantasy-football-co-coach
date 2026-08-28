@@ -2,7 +2,7 @@ import textwrap
 
 import pytest
 
-from ffcoach.config import ConfigError, LeagueConfig, load_config
+from ffcoach.config import ConfigError, EspnCredentials, LeagueConfig, load_config, load_espn_credentials
 
 
 def write(tmp_path, body):
@@ -78,3 +78,38 @@ def test_rejects_unknown_roster_slot(tmp_path):
 def test_missing_file_raises_config_error(tmp_path):
     with pytest.raises(ConfigError, match="not found"):
         load_config(tmp_path / "nope.yaml")
+
+
+ESPN_VALID = """
+    league_id: "123456"
+    season: 2026
+    espn_s2: "some-long-token"
+    swid: "{ABCDEF12-3456-7890-ABCD-EF1234567890}"
+"""
+
+
+def write_espn(tmp_path, body):
+    p = tmp_path / "espn.yaml"
+    p.write_text(textwrap.dedent(body))
+    return p
+
+
+def test_loads_valid_espn_credentials(tmp_path):
+    creds = load_espn_credentials(write_espn(tmp_path, ESPN_VALID))
+    assert creds == EspnCredentials(
+        league_id="123456",
+        season=2026,
+        espn_s2="some-long-token",
+        swid="{ABCDEF12-3456-7890-ABCD-EF1234567890}",
+    )
+
+
+def test_espn_credentials_missing_file_raises_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="not found"):
+        load_espn_credentials(tmp_path / "espn.yaml")
+
+
+def test_espn_credentials_missing_keys_raises_config_error(tmp_path):
+    bad = ESPN_VALID.replace('swid: "{ABCDEF12-3456-7890-ABCD-EF1234567890}"', "")
+    with pytest.raises(ConfigError, match="missing required keys"):
+        load_espn_credentials(write_espn(tmp_path, bad))

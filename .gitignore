@@ -224,3 +224,6 @@ web/data/
 
 # personal, not template — edit your own after copying league.example.yaml
 league.yaml
+
+# session credentials, not template — edit your own after copying espn.example.yaml
+espn.yaml

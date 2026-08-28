@@ -84,3 +84,51 @@ def test_doctor_reports_config_and_cache(workspace, capsys):
 def test_unknown_command_exits_nonzero(capsys):
     with pytest.raises(SystemExit):
         main(["nonsense"])
+
+
+def test_league_writes_teams_from_fixture(tmp_path):
+    out = tmp_path / "web" / "data" / "league.json"
+    code = main([
+        "league",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(tmp_path / "c.sqlite3"),
+        "--out", str(out),
+    ])
+    assert code == 0
+    payload = json.loads(out.read_text())
+    assert payload["schema_version"] == 1
+    assert len(payload["teams"]) == 2
+
+
+def test_league_fixture_mode_needs_no_espn_config(tmp_path):
+    # No espn.yaml exists at all in this tmp_path -- fixture mode must not
+    # require one.
+    out = tmp_path / "league.json"
+    code = main([
+        "league",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(tmp_path / "c.sqlite3"),
+        "--out", str(out),
+        "--espn-config", str(tmp_path / "does-not-exist.yaml"),
+    ])
+    assert code == 0
+
+
+def test_league_missing_espn_config_exits_nonzero_without_fixture(tmp_path):
+    code = main([
+        "league",
+        "--cache", str(tmp_path / "c.sqlite3"),
+        "--out", str(tmp_path / "league.json"),
+        "--espn-config", str(tmp_path / "absent-espn.yaml"),
+    ])
+    assert code == 1
+
+
+def test_league_missing_fixture_file_exits_nonzero(tmp_path):
+    code = main([
+        "league",
+        "--fixture", str(tmp_path / "nope.json"),
+        "--cache", str(tmp_path / "c.sqlite3"),
+        "--out", str(tmp_path / "league.json"),
+    ])
+    assert code == 1
