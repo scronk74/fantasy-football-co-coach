@@ -121,10 +121,11 @@ flowchart LR
     end
     subgraph SF["F · Dashboard"]
         direction TB
+        F0["F0 ffcoach serve"]:::confirmed
         F1["F1 week page"]:::confirmed
         F2["F2 notification control UI"]:::confirmed
         F3["F3 source refresh panel"]:::confirmed
-        F4["F4 alert history view"]:::confirmed
+        F4["F4 alert history view"]:::proposed
     end
     subgraph SG["G · Projections"]
         direction TB
@@ -149,6 +150,7 @@ flowchart LR
     B4 -. gates .-> C1
     G2 -. gates .-> G4
     E1 -. gates .-> E3
+    F0 -. gates .-> F2
 ```
 
 ### 3.3 Step registry
@@ -170,22 +172,23 @@ flowchart LR
 | C3 | Current week from ESPN `scoringPeriodId` | Next | 🟢 V1 | Week 1 | B1 | M | D-013 | ✅ 2026-08-29 |
 | C4 | Action-deadline alerting + bye look-ahead | Backlog | 🟢 V1 | Week 1 | C3 | M | D-014 | ✅ 2026-08-29 |
 | C5 | Read lineup-lock league setting | Backlog | 🟢 V1 | Week 1 | B1 | M | D-015 | ✅ 2026-08-29 |
-| D1 | `Notifier` interface + 3 channels | Backlog | 🟢 V1 | Week 1 | C2 | M | D-016 | ✅ 2026-08-29 |
+| D1 | `Notifier` interface + **ntfy first** | Backlog | 🟢 V1 | Week 1 | C2 | M | D-016, D-042 | ✅ 2026-08-29 |
 | D2 | Message rendering (160-char SMS budget) | Backlog | 🟢 V1 | Week 1 | D1 | L | D-017 | ✅ 2026-08-29 |
 | D3 | Quiet hours + two-strike repeat policy | Backlog | 🟢 V1 | Week 1 | D1 | M | D-018, D-019 | ✅ 2026-08-29 |
 | D4 | Per-alert enable / tier / threshold config | Backlog | 🟢 V1 | Week 1 | D1 | L | D-020 | ✅ 2026-08-29 |
-| D5 | Channel bake-off (`notify --test`) | Backlog | 🟢 V1 | Week 1 | D1 | L | Q-1 | ✅ 2026-08-29 |
-| E1 | **Structured run logging** | Backlog | 🟢 V1 | Week 1 | D1 | M | D-021 | ✅ 2026-08-29 |
+| D5 | Channel bake-off (`notify --test`) | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
+| E1 | **Structured run logging** (JSONL + SQLite history) | Backlog | 🟢 V1 | Week 1 | D1 | M | D-021, D-041 | ✅ 2026-08-29 |
 | E2 | `launchd` install + per-window scheduling | Backlog | 🟢 V1 | Week 1 | D1 | **H** | D-022 | ✅ 2026-08-29 |
 | E3 | Dead-man's switch | Backlog | 🟢 V1 | Week 1 | E1, E2 | M | D-023 | ✅ 2026-08-29 |
 | E4 | Delivery-failure detection + fallback | Backlog | 🟢 V1 | Week 1 | D1, E1 | M | D-024 | ✅ 2026-08-29 |
 | E5 | `ffcoach init` + hardened `doctor` | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
 | E6 | Inactives sweep (~90m pre-kickoff) | Backlog | 🟢 V1 | Week 1 | E2 | M | D-026 | ✅ 2026-08-29 |
-| F1 | Week dashboard (action queue + matchup strip) | Backlog | 🟢 V1 | — | C4 | L | D-027, D-028 | ✅ 2026-08-29 |
-| F2 | Notification control UI | Backlog | 🟢 V1 | — | D4 | M | D-020 | ✅ 2026-08-29 |
-| F3 | Data-source refresh / health panel | Backlog | 🟢 V1 | — | E1 | L | D-029 | ✅ 2026-08-29 |
-| F4 | Alert history view | Backlog | 🔵 V1-nice | — | E1 | L | — | 🤖 |
-| G1 | ESPN + Sleeper projection sources | Backlog | 🔵 V1-nice | — | B3 | M | D-030 | ✅ 2026-08-29 |
+| F0 | **`ffcoach serve` — local web server** | Backlog | 🟢 V1 | — | — | L | D-040 | ✅ 2026-08-29 |
+| F1 | Week dashboard (action queue + matchup strip) | Backlog | 🟢 V1 | — | C4, F0 | L | D-027, D-028 | ✅ 2026-08-29 |
+| F2 | Notification control UI (writes config) | Backlog | 🟢 V1 | — | D4, F0 | M | D-020, D-040 | ✅ 2026-08-29 |
+| F3 | Data-source refresh / health panel | Backlog | 🟢 V1 | — | E1, F0 | L | D-029 | ✅ 2026-08-29 |
+| F4 | Alert history view | Backlog | 🔵 V1-nice | — | E1, F0 | L | — | 🤖 |
+| G1 | ESPN + Sleeper projection sources (**two, not three**) | Backlog | 🔵 V1-nice | — | B3 | M | D-030, D-043 | ✅ 2026-08-29 |
 | G2 | Aggregation + accuracy weighting | Backlog | 🔵 V1-nice | — | G1 | M | D-030 | ✅ 2026-08-29 |
 | G3 | Decision log (projection + outcome) | Backlog | 🔵 V1-nice | — | G1 | M | D-031 | ✅ 2026-08-29 |
 | G4 | Bench-upgrade alerts | Backlog | 🔵 V1-nice | — | G2 | M | D-032 | ✅ 2026-08-29 |
@@ -197,8 +200,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 1/5 (20%) · D 0/5 · E 0/6 · F 0/4 · G 0/5 · H 0/6.
-**Overall:** 9/39 steps done (23%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 1/5 (20%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 9/40 steps done (23%).
 
 ## 4. Done ledger
 
@@ -268,14 +271,17 @@ flowchart LR
 - **D-037 — Vegas context parked until the season starts.** ✅ *(2026-08-29)*. See Q-3 for the exact re-check.
 - **D-038 — One league now; don't hardcode against a second.** ✅ *(2026-08-29)*.
 - **D-039 — Feature branches + PRs into `main`, never direct merge.** ✅ *(2026-08-28)*.
+- **D-040 — `ffcoach serve`: a small local web server.** ✅ *(2026-08-29)*. Python stdlib only, localhost, no new dependency. Two things forced it: requiring VS Code Live Server is real friction for a tool checked weekly, and **notification control (F2) is impossible as static HTML** — a page cannot write your config file. Replaces the Live Server workflow.
+- **D-041 — Logging is structured JSONL plus SQLite history.** ✅ *(2026-08-29)*. Every run appends a JSON line (checked / found / sent / failed); alert and decision history go in the existing SQLite cache. Greppable at 9am on a Sunday, queryable by the UI history view, and one storage decision covers both E1 and G3.
+- **D-042 — ntfy is the first channel built.** ✅ *(2026-08-29)*. Closes Q-1. No credentials, no carrier dependency, no length ceiling — the fastest path to a working alert. Email and SMS gateway remain behind the same interface for later; the bake-off (D5) drops to V1-nice.
+- **D-043 — Ship two projection sources, add a third later.** ✅ *(2026-08-29)*. Closes Q-5. ESPN and Sleeper are both confirmed free and unauthenticated, and a two-source average already beats either alone. Unblocks G1/G2 now instead of waiting on nflverse-derived modeling work.
 
 ### Open — need a decision
 
-- **Q-1 — Which notification channel wins?** 🟡 OPEN · 🤖. Email, email-to-SMS gateway, and ntfy all ship behind one interface; `notify --test` sends a sample through each so the choice is empirical. *Blocks nothing — but D5 can't close until you pick.* *Affects: D1, D5, E4.*
-- **Q-2 — Does the league use custom scoring?** 🟡 OPEN · 🤖. If yes, `model/scoring.py` (G5) becomes required rather than Hold. ESPN's `mSettings` may answer it automatically once R-1 clears. *Affects: G5, G1.*
-- **Q-3 — Does ESPN publish odds for free in-season?** 🟡 OPEN · 🤖. Re-check during a real game week: call `site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard` and inspect `events[].competitions[0].odds`. Populated ⇒ Vegas context is zero-setup and H5 should be built. Empty ⇒ decide whether an optional API key is acceptable. *Affects: H5.*
-- **Q-4 — Carrier**, if email-to-SMS wins Q-1. 🟡 OPEN · 🤖. *Affects: D1.*
-- **Q-5 — What is the third projection source?** 🟡 OPEN · 🤖. ESPN and Sleeper confirmed free. The third is most likely *derived* from nflverse rather than fetched — real work, not another adapter. *Affects: G1, G2.*
+- **Q-2 — Does the league use custom scoring?** 🟡 OPEN · 🤖 · *blocked by R-1*. If yes, `model/scoring.py` (G5) becomes required rather than Hold. ESPN's `mSettings` may answer it automatically once the invite lands. *Affects: G5, G1.*
+- **Q-3 — Does ESPN publish odds for free in-season?** 🟡 OPEN · 🤖 · *blocked until Sept 2026*. Re-check during a real game week: call `site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard` and inspect `events[].competitions[0].odds`. Populated ⇒ Vegas context is zero-setup and H5 should be built. Empty ⇒ decide whether an optional API key is acceptable. *Affects: H5.*
+- **Q-4 — Carrier**, only if the SMS gateway is ever built. 🟡 OPEN · 🤖 · *deferred by D-042* — ntfy needs no carrier, so this no longer blocks anything. *Affects: D1.*
+- **Q-6 — What is the third projection source, eventually?** 🟡 OPEN · 🤖 · *not blocking*. D-043 ships two now. A third is most likely *derived* from nflverse rather than fetched — real modeling work, not another adapter. *Affects: G1, G2.*
 
 ## 7. Roadblocks
 
