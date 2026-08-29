@@ -65,3 +65,18 @@ def parse_players(raw: str) -> dict[tuple[str, str], dict]:
             continue
         out[(normalize_name(name), position)] = row
     return out
+
+
+def parse_players_by_id(raw: str) -> dict[str, dict]:
+    """Pure: JSON text in, lookup keyed by Sleeper player id out.
+
+    The feed is already keyed by player id at the top level; the name-keyed
+    view above discards that. Matching by id is strictly more reliable, so
+    it is preferred whenever the crosswalk supplies one.
+    """
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise PlayersUnavailable(f"could not parse Sleeper response: {exc}") from exc
+
+    return {str(key): row for key, row in payload.items() if isinstance(row, dict)}

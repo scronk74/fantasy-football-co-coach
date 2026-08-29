@@ -36,6 +36,22 @@ def normalize_name(name: str) -> str:
 
 
 @dataclass(frozen=True)
+class PlayerIds:
+    """Every platform's id for one player, from the crosswalk.
+
+    Populated by `sources/match.enrich`. Sources added later join on these
+    rather than on names -- which is the point: name matching has already
+    failed here twice, on accented characters and on nicknames.
+    """
+
+    mfl_id: str | None = None
+    sleeper_id: str | None = None
+    espn_id: str | None = None
+    gsis_id: str | None = None
+    fantasypros_id: str | None = None
+
+
+@dataclass(frozen=True)
 class Player:
     name: str
     position: str
@@ -46,6 +62,11 @@ class Player:
     times_drafted: int
     injury_status: str | None
     sleeper_id: str | None
+    # Trails the older scalar `sleeper_id`, which stays as the id actually
+    # joined against Sleeper. `ids` is the full crosswalk record and is what
+    # later sources resolve through.
+    ids: PlayerIds = PlayerIds()
+    match_confidence: str = "exact"
 
     @property
     def key(self) -> tuple[str, str]:
