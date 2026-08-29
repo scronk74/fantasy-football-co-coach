@@ -13,9 +13,15 @@ from ffcoach.config import ConfigError, load_config, load_espn_credentials
 from ffcoach.leagues.espn import parse_league
 from ffcoach.leagues.espn_client import EspnUnavailable, fetch_league
 from ffcoach.report.build import board_payload, league_payload, write_board
+from ffcoach.sources.crosswalk import CrosswalkUnavailable, fetch_crosswalk, parse_crosswalk
 from ffcoach.sources.ffcalc import AdpUnavailable, fetch_adp, parse_adp
 from ffcoach.sources.match import enrich
-from ffcoach.sources.sleeper import PlayersUnavailable, fetch_players, parse_players
+from ffcoach.sources.sleeper import (
+    PlayersUnavailable,
+    fetch_players,
+    parse_players,
+    parse_players_by_id,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -49,8 +55,20 @@ def _parser() -> argparse.ArgumentParser:
 def _load_players(config, cache):
     raw_adp = fetch_adp(config.scoring, config.teams, config.season, cache)
     players = parse_adp(raw_adp)
-    meta = parse_players(fetch_players(cache))
-    return enrich(players, meta)
+
+    raw_meta = fetch_players(cache)
+    meta = parse_players(raw_meta)
+    meta_by_id = parse_players_by_id(raw_meta)
+
+    # Identity is best-effort: if the crosswalk is unreachable the join
+    # falls back to names, which is how this worked before it existed.
+    crosswalk = None
+    try:
+        crosswalk = parse_crosswalk(fetch_crosswalk(cache))
+    except CrosswalkUnavailable as exc:
+        print(f"note: player crosswalk unavailable, matching by name only: {exc}", file=sys.stderr)
+
+    return enrich(players, meta, crosswalk=crosswalk, meta_by_id=meta_by_id)
 
 
 def _run_league(args, cache: Cache) -> int:
@@ -111,10 +129,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        players, unmatched = _load_players(config, cache)
+        result = _load_players(config, cache)
     except (AdpUnavailable, PlayersUnavailable) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    players, unmatched, fuzzy = result.players, result.unmatched, result.fuzzy
 
     if args.command == "refresh":
         print(f"Cached {len(players)} players; {len(unmatched)} unmatched.")
@@ -132,4 +152,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Wrote {len(rows)} players to {args.out}")
     if unmatched:
         print(f"note: {len(unmatched)} players had no Sleeper match", file=sys.stderr)
+    if fuzzy:
+        print(
+            f"note: {len(fuzzy)} players matched only by surname: {', '.join(fuzzy)}",
+            file=sys.stderr,
+        )
     return 0
