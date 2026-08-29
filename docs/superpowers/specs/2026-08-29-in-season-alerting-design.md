@@ -36,16 +36,54 @@ important capability is the one with no code behind it.
 - Draft assistance. Handled elsewhere.
 - Waiver-wire recommendations. Deferred to a later phase so lineup integrity
   ships first and gets proven across real weeks.
-- Multi-user support, hosting, login.
+- **Other fantasy platforms.** ESPN only, permanently. `LeagueAdapter` stays,
+  but its justification is that it lets tests inject fixture rosters without
+  HTTP — not future platform flexibility.
+- Hosting or login. The tool is cloned and run locally by each person.
 
 ## Constraints
 
 - **Runs on a dedicated iMac** the user leaves on. This machine sleeps, which
   is the single largest operational risk (see Scheduling).
 - **Free data only.** No paid projection feeds.
-- **Projections come from ESPN and are mediocre.** Every design decision that
-  touches a projected number assumes it carries real error.
+- **Must be clonable by someone else.** Another person clones the repo, supplies
+  their own ESPN league id and cookies, and it works against their league. No
+  personal data in the repository, and setup failures must be legible.
 - iPhone for notifications. Channel undecided by design (see Channels).
+
+## Projection quality is the central technical problem
+
+[Fantasy Football Analytics' 12-season study][ffa] establishes two facts that
+drive most of this design:
+
+1. **Aggregation beats every individual source** — a simple average of multiple
+   projection sources outperformed individual sources in 69% of head-to-head
+   comparisons and beat every single model over twelve seasons.
+2. **ESPN's projections are no longer good.** They produced the best QB
+   projections in 2016–2017 and finished *dead last* in recent seasons.
+
+[ffa]: https://fantasyfootballanalytics.net/2026/08/we-analyzed-12-seasons-of-fantasy-football-projections-heres-what-we-found.html
+
+The consequence is blunt: **an alert of the form "start Spears over Moss, +4.2",
+computed from ESPN projections alone, is confidently wrong advice on a
+schedule.** Any recommendation resting on a projected margin is only as good as
+the projection behind it.
+
+Therefore:
+
+- Projections are **aggregated from at least three sources**, weighted by
+  measured accuracy rather than averaged blindly.
+- Anything projection-dependent is **sequenced after** the alerts that need no
+  projections at all.
+
+### Available sources, verified live 2026-08-29
+
+| Source | Auth | Notes |
+|---|---|---|
+| ESPN `kona_player_info` | **none** | Projections available without league cookies |
+| Sleeper `/projections/nfl/{yr}/{wk}` | **none** | Full stat detail: `pts_ppr`, `rush_att`, `rec_tgt` |
+| nflverse | none | Historical stats; basis for a derived third projection |
+| Vegas odds | key required | **Parked** — see Open questions |
 
 ## Architecture
 
@@ -56,8 +94,9 @@ launchd (per-window)
 advisors/lineup.py ──► findings[] ──┬──► notify/  (interrupt tier)
    ▲                                └──► web/data/week.json ──► web/week.html
    │
-leagues/espn.py (rosters, projections, injury status)
-sources/nflverse.py (NFL schedule → per-player kickoff times)
+leagues/espn.py (rosters, injury status)
+sources/schedule.py (NFL schedule → byes + per-player kickoff times)
+sources/projections/ (ESPN + Sleeper + derived, aggregated — later phase)
 ```
 
 **One finding set drives both the alert and the page.** The dashboard is the
@@ -89,10 +128,22 @@ qualify:
 2. **Starter ruled OUT / IR** — certain.
 3. **Starter downgraded to OUT close to kickoff** — the inactives sweep below.
 
-**Bench-over-starter upgrades never interrupt by default.** They rest on
-projections carrying several points of error; a 0.4-point "edge" is noise, and
-alerts the user learns to ignore are worse than no alerts. They ride the digest,
-and are individually promotable to interrupt via config with a points threshold.
+Note what these three share: **each is a fact, not an estimate.** A player on
+bye scores zero. A player ruled OUT scores zero. Nothing about them depends on a
+projection being any good, which is why they are correct on day one and ship
+first.
+
+**Bench-over-starter upgrades never interrupt by default**, and are not built
+until projection aggregation exists (Phase 4, gated on Phase 3). A margin
+computed from a single mediocre source is not evidence; a 0.4-point "edge" is
+noise dressed as precision. They ride the digest, and are individually
+promotable to interrupt via config above a points threshold the decision log
+eventually sets from real data.
+
+The deeper reason for the gate: alerts the user learns to ignore are worse than
+no alerts, because the erosion is not contained. A channel that cries wolf about
+bench upgrades is the same channel carrying "your starter is on bye" — and that
+one is never wrong and must never be ignored.
 
 ### The inactives sweep
 
@@ -230,6 +281,40 @@ Findings target **decisions and outcomes, never people**. "Benching a 26-point
 back is a choice" roasts the move; anything about the person does not ship.
 Funnier, and it survives being screenshotted.
 
+## The decision log
+
+Every recommendation is recorded: what it said, which sources produced it, what
+each source projected, whether the user acted on it, and what actually happened.
+
+This is not analytics for its own sake. It does three specific jobs:
+
+1. **Makes accuracy weighting possible.** Sources cannot be weighted by measured
+   accuracy without measuring accuracy. This is the measurement.
+2. **Answers "is this tool helping me?"** with evidence rather than vibes. By
+   mid-season the user can see whether following the advice gained or lost
+   points.
+3. **Sets `min_delta` from data.** The threshold above which a bench upgrade is
+   worth surfacing starts as a guess and should end as an observation.
+
+Written per week to a local store; no data leaves the machine.
+
+## Portability
+
+Another person must be able to clone this repository and run it against their
+own ESPN league.
+
+- **`ffcoach init`** — interactive setup for league id, ESPN cookies, and
+  notification channel. Each value is validated against live ESPN as it is
+  entered, and failures explain what to fix rather than raising a stack trace.
+- **`ffcoach doctor`** — reports precisely what is unconfigured or broken:
+  cookies expired, league unreachable, channel unset, scheduler not installed.
+- **No personal data in the repository.** `league.yaml` and `espn.yaml` are
+  gitignored today; a first-run check makes this a guarantee rather than an
+  accident.
+
+ESPN only. There is no configuration path to another platform and none is
+planned.
+
 ## Error handling
 
 - A failed source serves stale cache and marks the payload stale, as today.
@@ -257,25 +342,51 @@ Funnier, and it survives being screenshotted.
 
 ## Phasing
 
+**Ship the alerts that cannot be wrong first.** Bye weeks, OUT, and IR are
+facts, not estimates. They require no projections, so they are correct on day
+one and deliver the entire "don't miss a move" value while the harder projection
+work proceeds independently. Every projection-dependent feature is sequenced
+behind the aggregation that makes it trustworthy.
+
 | Phase | Delivers | Gate |
 |---|---|---|
-| **A** | `week.html` with mock data, full design review | User approves the look |
-| **B** | `advisors/lineup.py` + ESPN projections; page runs on real data | ESPN cookies present |
-| **C** | `notify/` + channel bake-off via `--test`; interrupt tier live | Channel chosen |
-| **D** | `launchd` scheduling, inactives sweep, heartbeat | Runs unattended |
-| **E** | Tuesday digest + smack talk | — |
-| **F** | Waiver wire | Deferred |
+| **1** | Bye/OUT/IR alerts, NFL schedule, three channels, quiet hours, dedupe, `ffcoach init`, dead-man's switch | — |
+| **2** | `launchd` install, per-window scheduling, inactives sweep | Phase 1 proven |
+| **3** | Projection aggregation (ESPN + Sleeper + derived), accuracy weighting, decision log | — |
+| **4** | Bench-upgrade alerts (digest tier), score swings | Phase 3 — projections must be trustworthy first |
+| **5** | `week.html` dashboard from the reviewed mockups | — |
+| **6** | Tuesday digest + smack talk | — |
+| **7** | League-wide intelligence: positional surplus/need across all rosters, trade targets, waiver competition | — |
+| **8** | Waiver wire | — |
 
-Phase A ships no functionality by design. The user reviews the interface before
-any plumbing is built, so layout disagreements cost mockup edits rather than
-rework.
+Phase 1 deliberately ships **no UI**. Its value arrives as text messages. The
+dashboard mockups have already been reviewed and approved; they are built in
+Phase 5 against real data rather than mock data, since by then real data exists.
+
+Phase 4 sitting behind Phase 3 is the sequencing decision this spec turns on: a
+bench-upgrade alert built on ESPN-only projections would be worse than no alert,
+because it teaches the user to distrust the channel that also carries the
+alerts that are never wrong.
 
 ## Open questions
 
+- **Vegas game context — parked until September 2026. Revisit once the regular
+  season is underway.** Game totals and spreads encode market expectations about
+  game script better than most free projection models, and almost no free tool
+  surfaces this beside a lineup. Two things blocked it in the offseason:
+  `the-odds-api.com` returned 401 without a signup key (free tier exists, but the
+  signup conflicts with clone-and-go), and ESPN's own scoreboard endpoint
+  returned games with an **empty `odds` field** — probably an offseason artifact,
+  but unverified. **The check when revisiting:** during a real game week, call
+  `site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard` and inspect
+  `events[].competitions[0].odds`. If ESPN carries odds for free, this becomes
+  zero-setup and should be built. If not, the question is whether an optional
+  API key that degrades gracefully is acceptable.
 - **Carrier**, if the email-to-SMS channel wins the bake-off.
 - **League scoring rules.** Still placeholder defaults. ESPN's `mSettings` view
   is already fetched and may populate them automatically; custom scoring would
   require `model/scoring.py`, still unbuilt.
-- **Projection quality is unmeasured.** Worth logging projected-vs-actual all
-  season so the `min_delta` threshold can eventually be set from evidence rather
-  than a guess.
+- **The third projection source is unidentified.** ESPN and Sleeper are
+  confirmed free and unauthenticated. The third is most likely derived from
+  nflverse historical data rather than fetched, which makes it real work rather
+  than another adapter.
