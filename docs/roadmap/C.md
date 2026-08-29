@@ -51,7 +51,7 @@ number would manufacture either findings or false silence.
 
 ---
 
-## C3 — Current week from ESPN · In-progress
+## C3 — Current week from ESPN ✅ Done *(2026-08-29)*
 
 **The gap:** nothing determines the current week. `find_problems(team, schedule, week, now)` takes it
 as a parameter no caller computes. Every part of the system is week-indexed.
@@ -62,10 +62,16 @@ bug alerts about the *wrong week entirely* — silent and total.
 
 - [x] **C3.1** — Test: `parse_league` extracts `scoringPeriodId` and `status.currentMatchupPeriod`.
 - [x] **C3.2** — Add both to the `League` model.
-- [ ] **C3.3** — Thread the week through the CLI so no caller invents one.
-- [ ] **C3.4** — Fallback when the league fetch fails: derive from the cached schedule, and **log that
+- [x] **C3.3** — Thread the week through the CLI so no caller invents one.
+- [x] **C3.4** — Fallback when the league fetch fails: derive from the cached schedule, and **log that
       the fallback was used** (E1) — a silently-wrong week is the worst outcome here.
-- [ ] **C3.5** — Guard test: week 0 / missing / out-of-range is an error, never a default.
+- [x] **C3.5** — Guard test: week 0 / missing / out-of-range is an error, never a default.
+
+**Outcome:** `src/ffcoach/model/week.py`, 17 tests. ESPN's number short-circuits *before* any
+schedule fetch — verified the ESPN path writes nothing to the cache and needs no network.
+Derivation is fallback-only and self-labels as `derived`; the CLI prints provenance either way
+and warns on stderr when it fell back. With neither source the command exits nonzero rather
+than defaulting.
 
 ---
 
