@@ -98,6 +98,42 @@ def test_parse_handles_an_empty_roster(raw):
     assert disasters.roster == ()
 
 
+def test_parse_reads_lineup_slot_counts(raw):
+    league = parse_league(raw)
+    assert league.roster_slots["QB"] == 1
+    assert league.roster_slots["RB"] == 2
+    assert league.roster_slots["FLEX"] == 1
+
+
+def test_parse_drops_slots_the_league_does_not_use(raw):
+    """ESPN lists every slot in the game, most with a count of zero."""
+    league = parse_league(raw)
+    assert all(count > 0 for count in league.roster_slots.values())
+
+
+def test_starting_slots_exclude_bench_and_ir(raw):
+    league = parse_league(raw)
+    assert "BN" in league.roster_slots
+    assert "BN" not in league.starting_slots
+    assert "IR" not in league.starting_slots
+
+
+def test_parse_takes_the_week_from_espn(raw):
+    league = parse_league(raw)
+    assert league.current_week == 5
+
+
+def test_current_week_is_none_when_espn_omits_it():
+    league = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}')
+    assert league.current_week is None
+
+
+def test_roster_slots_are_empty_when_settings_are_absent():
+    """No settings means the empty-slot check is skipped, never guessed."""
+    league = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}')
+    assert league.roster_slots == {}
+
+
 def test_parse_rejects_malformed_json():
     with pytest.raises(EspnUnavailable, match="parse"):
         parse_league("<html>nope</html>")

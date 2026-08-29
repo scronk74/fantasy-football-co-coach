@@ -202,6 +202,106 @@ def test_find_replacements_is_usable_directly(schedule, week):
     assert find_replacements(team, "RB", schedule, week) == ("Backup",)
 
 
+# --- empty starting slots ---
+#
+# An empty slot is a guaranteed zero and the most elementary lineup failure
+# there is. It was invisible to the first implementation because that iterated
+# roster entries, and an empty slot has no entry to iterate.
+
+STARTERS = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DEF": 1}
+
+
+def test_an_unfilled_starting_slot_is_found(schedule, week):
+    team = team_with(entry("Only Back", "RB", "KC", slot="RB"))
+    found = find_problems(team, schedule, week, EARLY, required_slots={"RB": 2})
+    assert [f.kind for f in found] == ["empty_slot"]
+    assert found[0].lineup_slot == "RB"
+
+
+def test_each_missing_slot_produces_its_own_finding(schedule, week):
+    team = team_with(entry("Only Back", "RB", "KC", slot="RB"))
+    found = find_problems(team, schedule, week, EARLY, required_slots={"RB": 3})
+    assert len(found) == 2
+
+
+def test_a_fully_filled_lineup_reports_no_empty_slots(schedule, week):
+    team = team_with(
+        entry("QB1", "QB", "KC", slot="QB"),
+        entry("RB1", "RB", "KC", slot="RB"),
+        entry("RB2", "RB", "BUF", slot="RB"),
+    )
+    found = find_problems(
+        team, schedule, week, EARLY, required_slots={"QB": 1, "RB": 2}
+    )
+    assert found == []
+
+
+def test_an_empty_bench_slot_is_not_a_problem(schedule, week):
+    """Only starting slots can cost points."""
+    team = team_with(entry("QB1", "QB", "KC", slot="QB"))
+    found = find_problems(
+        team, schedule, week, EARLY, required_slots={"QB": 1, "BN": 6, "IR": 1}
+    )
+    assert found == []
+
+
+def test_empty_slot_names_an_eligible_bench_replacement(schedule, week):
+    team = team_with(entry("A Back", "RB", "BUF", slot="BN"))
+    found = find_problems(team, schedule, week, EARLY, required_slots={"RB": 1})
+    assert found[0].replacements == ("A Back",)
+    assert "A Back" in found[0].reason
+
+
+def test_empty_flex_accepts_any_flex_eligible_bench_player(schedule, week):
+    team = team_with(entry("An End", "TE", "BUF", slot="BN"))
+    found = find_problems(team, schedule, week, EARLY, required_slots={"FLEX": 1})
+    assert found[0].replacements == ("An End",)
+
+
+def test_empty_slot_reason_says_the_slot_is_empty(schedule, week):
+    team = team_with()
+    found = find_problems(team, schedule, week, EARLY, required_slots={"QB": 1})
+    assert "empty" in found[0].reason.lower()
+
+
+def test_empty_slot_sorts_with_out_not_after_bye(schedule, week):
+    """Same severity as OUT (D-012), which sorts ahead of bye."""
+    bye = bye_team_for(schedule, week)
+    team = team_with(entry("Bye Guy", "WR", bye, slot="WR"))
+    found = find_problems(
+        team, schedule, week, EARLY, required_slots={"WR": 1, "QB": 1}
+    )
+    kinds = [f.kind for f in found]
+    assert kinds.index("empty_slot") < kinds.index("bye")
+
+
+def test_an_empty_slot_is_never_locked(schedule, week):
+    """No player means no kickoff, so the slot stays changeable."""
+    late = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    team = team_with()
+    found = find_problems(team, schedule, week, late, required_slots={"QB": 1})
+    assert found[0].locked is False
+
+
+def test_omitting_required_slots_skips_the_check_entirely(schedule, week):
+    """Without slot counts we genuinely cannot know, so we claim nothing."""
+    team = team_with(entry("Only Back", "RB", "KC", slot="RB"))
+    assert find_problems(team, schedule, week, EARLY) == []
+
+
+def test_a_player_in_a_slot_the_league_does_not_use_is_ignored(schedule, week):
+    team = team_with(entry("Oddity", "QB", "KC", slot="OP"))
+    found = find_problems(team, schedule, week, EARLY, required_slots={"QB": 1})
+    assert [f.kind for f in found] == ["empty_slot"]
+
+
+def test_an_out_starter_still_counts_as_filling_his_slot(schedule, week):
+    """He is in the slot; the problem is that he is out, not that it is empty."""
+    team = team_with(entry("Hurt Guy", "RB", "KC", slot="RB", injury="OUT"))
+    found = find_problems(team, schedule, week, EARLY, required_slots={"RB": 1})
+    assert [f.kind for f in found] == ["out"]
+
+
 # --- locking and ordering ---
 
 

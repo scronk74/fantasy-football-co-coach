@@ -7,7 +7,7 @@ from knowing that -- a second platform later satisfies the same protocol.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 BENCH_SLOTS = ("BN", "IR")
@@ -63,6 +63,18 @@ class League:
     name: str
     season: int
     teams: tuple[Team, ...]
+    # Lineup slot -> how many the league starts, from ESPN's
+    # rosterSettings.lineupSlotCounts. Empty when settings were not fetched,
+    # in which case the empty-slot check is skipped rather than guessed.
+    roster_slots: dict[str, int] = field(default_factory=dict)
+    # ESPN's own week number. Taken rather than derived: computing it from the
+    # calendar means owning the rollover moment, and a rollover bug alerts
+    # about the wrong week entirely.
+    current_week: int | None = None
+
+    @property
+    def starting_slots(self) -> dict[str, int]:
+        return {s: n for s, n in self.roster_slots.items() if s not in BENCH_SLOTS}
 
 
 @runtime_checkable

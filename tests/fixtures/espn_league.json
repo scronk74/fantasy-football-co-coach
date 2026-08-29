@@ -3,7 +3,27 @@
   "id": 123456,
   "seasonId": 2026,
   "settings": {
-    "name": "The League"
+    "name": "The League",
+    "rosterSettings": {
+      "lineupSlotCounts": {
+        "0": 1,
+        "2": 2,
+        "4": 2,
+        "6": 1,
+        "16": 1,
+        "17": 1,
+        "20": 7,
+        "21": 1,
+        "23": 1,
+        "1": 0,
+        "3": 0,
+        "5": 0,
+        "7": 0,
+        "8": 0,
+        "9": 0
+      },
+      "lineupLocktimeType": "INDIVIDUAL_GAME"
+    }
   },
   "members": [
     {
@@ -123,5 +143,9 @@
         "entries": []
       }
     }
-  ]
+  ],
+  "scoringPeriodId": 5,
+  "status": {
+    "currentMatchupPeriod": 5
+  }
 }

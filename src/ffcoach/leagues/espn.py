@@ -135,4 +135,44 @@ def parse_league(raw: str, my_swid: str | None = None) -> League:
         teams=tuple(
             _parse_team(row, member_names, my_swid) for row in payload.get("teams", [])
         ),
+        roster_slots=_parse_roster_slots(payload),
+        current_week=_parse_current_week(payload),
     )
+
+
+def _parse_roster_slots(payload: dict) -> dict[str, int]:
+    """Lineup slot counts from `rosterSettings.lineupSlotCounts`.
+
+    ESPN keys this by slot id as a string and lists every slot in the game,
+    most with a count of zero. Only non-zero, recognized slots are kept -- the
+    zeros are slots this league does not use.
+    """
+    counts = (
+        payload.get("settings", {}).get("rosterSettings", {}).get("lineupSlotCounts")
+        or {}
+    )
+    out: dict[str, int] = {}
+    for slot_id, count in counts.items():
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            continue
+        name = _SLOT_IDS.get(int(slot_id)) if str(slot_id).lstrip("-").isdigit() else None
+        if name and n > 0:
+            out[name] = out.get(name, 0) + n
+    return out
+
+
+def _parse_current_week(payload: dict) -> int | None:
+    """ESPN's own week number, preferred over anything we could derive."""
+    for value in (
+        payload.get("scoringPeriodId"),
+        payload.get("status", {}).get("currentMatchupPeriod"),
+    ):
+        try:
+            week = int(value)
+        except (TypeError, ValueError):
+            continue
+        if week > 0:
+            return week
+    return None
