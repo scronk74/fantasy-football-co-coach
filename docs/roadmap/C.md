@@ -23,7 +23,7 @@ Notable behaviors, each deliberate:
 
 ---
 
-## C2 — Empty-slot detection 🔴 Live defect · Next
+## C2 — Empty-slot detection ✅ Done *(2026-08-29)*
 
 **The bug:** `find_problems` iterates `team.roster`. An empty starting slot **has no entry to
 iterate**, so it produces no finding. The most elementary lineup failure in fantasy football — a slot
@@ -32,21 +32,26 @@ with nobody in it, a guaranteed zero — is invisible to the tool built to catch
 Found by walking the user journey, not by a test. No existing test would have caught it, because every
 fixture roster is fully populated.
 
-- [ ] **C2.1** — Add a failing test: a team whose required starting slots exceed its filled starting
+- [x] **C2.1** — Add a failing test: a team whose required starting slots exceed its filled starting
       slots produces an `empty_slot` finding.
-- [ ] **C2.2** — Establish required slots. `LeagueConfig.roster` has them for the manual path; ESPN's
+- [x] **C2.2** — Establish required slots. `LeagueConfig.roster` has them for the manual path; ESPN's
       `rosterSettings.lineupSlotCounts` is the real source. Prefer ESPN, fall back to config.
-- [ ] **C2.3** — Implement: diff required slots against filled slots; emit one finding per empty slot.
-- [ ] **C2.4** — Severity — same as OUT (D-012). Confirm ordering test.
-- [ ] **C2.5** — Replacements: reuse `find_replacements`; an empty slot with an eligible bench player
+- [x] **C2.3** — Implement: diff required slots against filled slots; emit one finding per empty slot.
+- [x] **C2.4** — Severity — same as OUT (D-012). Confirm ordering test.
+- [x] **C2.5** — Replacements: reuse `find_replacements`; an empty slot with an eligible bench player
       is the easiest possible fix and should say so.
-- [ ] **C2.6** — Verify against the ESPN fixture with a slot deliberately emptied.
+- [x] **C2.6** — Verify against the ESPN fixture with a slot deliberately emptied.
 
-**Risk: H** — it is a correctness hole in shipped code, and the failure is silent.
+**Outcome:** fixed by *counting* required vs filled slots rather than iterating entries.
+Verified end-to-end against the ESPN fixture: **1 finding before, 6 after** — five empty
+slots that were previously invisible. Slot counts come from ESPN's
+`rosterSettings.lineupSlotCounts`, whose shape was confirmed against the live public
+endpoint. When counts are absent the check is **skipped, not guessed** — inventing a
+number would manufacture either findings or false silence.
 
 ---
 
-## C3 — Current week from ESPN · Next
+## C3 — Current week from ESPN · In-progress
 
 **The gap:** nothing determines the current week. `find_problems(team, schedule, week, now)` takes it
 as a parameter no caller computes. Every part of the system is week-indexed.
@@ -55,8 +60,8 @@ as a parameter no caller computes. Every part of the system is week-indexed.
 present in the public settings response. Deriving it means owning the rollover moment, and a rollover
 bug alerts about the *wrong week entirely* — silent and total.
 
-- [ ] **C3.1** — Test: `parse_league` extracts `scoringPeriodId` and `status.currentMatchupPeriod`.
-- [ ] **C3.2** — Add both to the `League` model.
+- [x] **C3.1** — Test: `parse_league` extracts `scoringPeriodId` and `status.currentMatchupPeriod`.
+- [x] **C3.2** — Add both to the `League` model.
 - [ ] **C3.3** — Thread the week through the CLI so no caller invents one.
 - [ ] **C3.4** — Fallback when the league fetch fails: derive from the cached schedule, and **log that
       the fallback was used** (E1) — a silently-wrong week is the worst outcome here.
@@ -91,8 +96,10 @@ Some ESPN leagues lock **all** lineups at the week's first game rather than per 
 rule, per-player timing is actively wrong — a Sunday alert about a Monday-night starter is pointless
 because he locked Thursday.
 
-- [ ] **C5.1** — Find the field in `rosterSettings` (`lineupLockTimeOffset` exists; semantics
-      unconfirmed — the public defaults league returned `None`).
+- [ ] **C5.1** — ~~Find the field~~ **Found while building C2**: `rosterSettings.lineupLocktimeType`,
+      which returned `"INDIVIDUAL_GAME"` on the live public league. (An earlier note named
+      `lineupLockTimeOffset` — that field returned `None` and is *not* the right one.) The
+      weekly-lock value is still unknown; R-1 or another public league would confirm it.
 - [ ] **C5.2** — Model it as an enum: per-player vs weekly lock.
 - [ ] **C5.3** — When weekly, collapse all deadlines to the week's first kickoff.
 - [ ] **C5.4** — Default to per-player and **log the assumption** when the setting is absent.
