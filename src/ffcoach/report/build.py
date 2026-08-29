@@ -47,13 +47,23 @@ def league_payload(
     league: League,
     generated_at: str,
     stale_seconds: float | None,
+    week: int | None = None,
+    week_source: str | None = None,
 ) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
         "stale": stale_seconds is not None,
         "stale_seconds": stale_seconds,
-        "league": {"name": league.name, "season": league.season},
+        "week": week,
+        # "espn" or "derived". The page shows this so a fallback week is never
+        # presented as authoritative.
+        "week_source": week_source,
+        "league": {
+            "name": league.name,
+            "season": league.season,
+            "roster_slots": dict(league.roster_slots),
+        },
         "teams": [
             {
                 "team_id": t.team_id,

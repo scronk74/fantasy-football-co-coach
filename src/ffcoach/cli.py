@@ -12,7 +12,15 @@ from ffcoach.cache import Cache
 from ffcoach.config import ConfigError, load_config, load_espn_credentials
 from ffcoach.leagues.espn import parse_league
 from ffcoach.leagues.espn_client import EspnUnavailable, fetch_league
+from ffcoach.model.week import (
+    MAX_WEEK,
+    MIN_WEEK,
+    WeekResolution,
+    WeekUnavailable,
+    resolve_week,
+)
 from ffcoach.report.build import board_payload, league_payload, write_board
+from ffcoach.sources.schedule import ScheduleUnavailable, fetch_schedule, parse_schedule
 from ffcoach.sources.crosswalk import CrosswalkUnavailable, fetch_crosswalk, parse_crosswalk
 from ffcoach.sources.ffcalc import AdpUnavailable, fetch_adp, parse_adp
 from ffcoach.sources.match import enrich
@@ -47,6 +55,12 @@ def _parser() -> argparse.ArgumentParser:
                 type=Path,
                 default=None,
                 help="parse this JSON file instead of fetching ESPN (no cookies needed)",
+            )
+            p.add_argument(
+                "--season",
+                type=int,
+                default=dt.date.today().year,
+                help="NFL season, used to load the schedule for week resolution",
             )
 
     return parser
@@ -98,14 +112,47 @@ def _run_league(args, cache: Cache) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
+    # No caller may invent a week. Resolve it once, here, and say where it
+    # came from -- a derived week is a fallback, not a fact.
+    week = _resolve_week(league, cache, args.season)
+    if week is None:
+        return 1
+
     payload = league_payload(
         league,
         generated_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         stale_seconds=None,
+        week=week.week,
+        week_source=week.source,
     )
     write_board(payload, args.out)
-    print(f"Wrote {len(league.teams)} teams to {args.out}")
+    print(f"Wrote {len(league.teams)} teams to {args.out} — {week.note}")
+    if week.is_derived:
+        print(f"note: {week.note}", file=sys.stderr)
     return 0
+
+
+def _resolve_week(league, cache: Cache, season: int):
+    """Establish the current week, or explain why we refuse to guess.
+
+    ESPN's number short-circuits before the schedule is fetched at all: it is
+    authoritative, so loading a schedule to second-guess it would be wasted
+    work and would make the common path depend on the network.
+    """
+    if MIN_WEEK <= (league.current_week or 0) <= MAX_WEEK:
+        return WeekResolution(week=league.current_week, source="espn")
+
+    try:
+        schedule = parse_schedule(fetch_schedule(season, cache), season)
+    except ScheduleUnavailable as exc:
+        print(f"error: no week from ESPN and no schedule to derive one: {exc}", file=sys.stderr)
+        return None
+
+    try:
+        return resolve_week(league.current_week, schedule, dt.datetime.now(dt.UTC))
+    except WeekUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
 
 
 def main(argv: list[str] | None = None) -> int:
