@@ -1,0 +1,66 @@
+from ffcoach.leagues.base import LeagueAdapter, League, RosterEntry, Team
+
+
+def entry(**over):
+    base = dict(player_name="A Player", position="RB", nfl_team="ATL", lineup_slot="RB")
+    base.update(over)
+    return RosterEntry(**base)
+
+
+def test_starter_slots_are_starters():
+    for slot in ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF"):
+        assert entry(lineup_slot=slot).is_starter is True
+
+
+def test_bench_and_ir_are_not_starters():
+    assert entry(lineup_slot="BN").is_starter is False
+    assert entry(lineup_slot="IR").is_starter is False
+
+
+def team(**over):
+    base = dict(
+        team_id="1",
+        name="T",
+        owner="Steve",
+        wins=5,
+        losses=3,
+        ties=0,
+        points_for=650.0,
+        points_against=600.0,
+        roster=(),
+    )
+    base.update(over)
+    return Team(**base)
+
+
+def test_record_omits_ties_when_zero():
+    assert team(wins=5, losses=3, ties=0).record == "5-3"
+
+
+def test_record_includes_ties_when_nonzero():
+    assert team(wins=5, losses=3, ties=1).record == "5-3-1"
+
+
+def test_is_user_team_defaults_to_false():
+    assert team().is_user_team is False
+
+
+def test_league_holds_its_teams():
+    t = team()
+    league = League(name="The League", season=2026, teams=(t,))
+    assert league.teams == (t,)
+
+
+def test_espn_adapter_satisfies_league_adapter_protocol():
+    class FakeAdapter:
+        def fetch_league(self) -> League:
+            return League(name="T", season=2026, teams=())
+
+    assert isinstance(FakeAdapter(), LeagueAdapter)
+
+
+def test_something_without_fetch_league_does_not_satisfy_protocol():
+    class NotAnAdapter:
+        pass
+
+    assert not isinstance(NotAnAdapter(), LeagueAdapter)

@@ -1,0 +1,17 @@
+# Copy to espn.yaml and fill in with your own values. Never commit espn.yaml
+# -- it's gitignored, and espn_s2/swid authenticate as you.
+#
+# How to get these:
+#   1. Log into fantasy.espn.com in your browser.
+#   2. Open dev tools -> Application (Chrome) or Storage (Firefox) -> Cookies
+#      -> espn.com.
+#   3. Copy the values of espn_s2 and SWID (SWID includes the curly braces).
+#
+# There's no documented expiry and no refresh endpoint. They break on
+# logout, password change, or an ESPN-side session rotation -- when that
+# happens, ffcoach will tell you the auth failed and you repeat this.
+
+league_id: "your-league-id"
+season: 2026
+espn_s2: "your-espn_s2-cookie-value"
+swid: "{your-swid-cookie-value}"

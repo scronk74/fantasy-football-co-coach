@@ -51,6 +51,42 @@ class LeagueConfig:
         return rnd * self.teams + (self.teams - pos_in_round + 1)
 
 
+@dataclass(frozen=True)
+class EspnCredentials:
+    league_id: str
+    season: int
+    espn_s2: str
+    swid: str
+
+
+def load_espn_credentials(path: Path) -> EspnCredentials:
+    """Load the gitignored ESPN session-cookie file.
+
+    Kept separate from LeagueConfig/league.yaml: these are session
+    credentials that authenticate as you, not plain league settings, so
+    league.yaml stays safe to share or screenshot.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise ConfigError(f"ESPN credentials not found: {path}")
+
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"could not parse {path}: {exc}") from exc
+
+    missing = {"league_id", "season", "espn_s2", "swid"} - raw.keys()
+    if missing:
+        raise ConfigError(f"missing required keys: {', '.join(sorted(missing))}")
+
+    return EspnCredentials(
+        league_id=str(raw["league_id"]),
+        season=int(raw["season"]),
+        espn_s2=str(raw["espn_s2"]),
+        swid=str(raw["swid"]),
+    )
+
+
 def load_config(path: Path) -> LeagueConfig:
     path = Path(path)
     if not path.exists():

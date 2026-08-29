@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # .python-version pins 3.12; uv installs it rather than using the runner's.
+      - run: uv python install
+      - run: uv sync
+      - run: uv run pytest
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # No npm packages are installed -- node --test is the whole toolchain.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test

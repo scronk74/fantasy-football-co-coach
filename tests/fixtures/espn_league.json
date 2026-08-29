@@ -1,0 +1,71 @@
+{
+  "_note": "UNVERIFIED AGAINST A LIVE LEAGUE. Hand-built from the community-documented shape of ESPN's unofficial fantasy API (mTeam/mRoster/mSettings views). See the module docstring in src/ffcoach/leagues/espn.py. Replace with a real captured (cookie-scrubbed) response once the league invite lands.",
+  "id": 123456,
+  "seasonId": 2026,
+  "settings": { "name": "The League" },
+  "members": [
+    { "id": "{ABCDEF12-3456-7890-ABCD-EF1234567890}", "displayName": "Steve" },
+    { "id": "{11111111-2222-3333-4444-555555555555}", "displayName": "Dave" }
+  ],
+  "teams": [
+    {
+      "id": 1,
+      "location": "Steve's",
+      "nickname": "Dynasty",
+      "owners": ["{ABCDEF12-3456-7890-ABCD-EF1234567890}"],
+      "record": {
+        "overall": { "wins": 5, "losses": 3, "ties": 0, "pointsFor": 650.4, "pointsAgainst": 601.2 }
+      },
+      "roster": {
+        "entries": [
+          {
+            "lineupSlotId": 0,
+            "playerPoolEntry": {
+              "player": { "fullName": "Patrick Mahomes", "defaultPositionId": 1, "proTeamId": 12 }
+            }
+          },
+          {
+            "lineupSlotId": 2,
+            "playerPoolEntry": {
+              "player": { "fullName": "Bijan Robinson", "defaultPositionId": 2, "proTeamId": 1 }
+            }
+          },
+          {
+            "lineupSlotId": 23,
+            "playerPoolEntry": {
+              "player": { "fullName": "Amon-Ra St. Brown", "defaultPositionId": 3, "proTeamId": 8 }
+            }
+          },
+          {
+            "lineupSlotId": 16,
+            "playerPoolEntry": {
+              "player": { "fullName": "Ravens", "defaultPositionId": 16, "proTeamId": 33 }
+            }
+          },
+          {
+            "lineupSlotId": 20,
+            "playerPoolEntry": {
+              "player": { "fullName": "Bench Guy", "defaultPositionId": 4, "proTeamId": 18 }
+            }
+          },
+          {
+            "lineupSlotId": 21,
+            "playerPoolEntry": {
+              "player": { "fullName": "Hurt Guy", "defaultPositionId": 2, "proTeamId": 6 }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "location": "Dave's",
+      "nickname": "Disasters",
+      "owners": ["{11111111-2222-3333-4444-555555555555}"],
+      "record": {
+        "overall": { "wins": 2, "losses": 6, "ties": 0, "pointsFor": 500.1, "pointsAgainst": 610.9 }
+      },
+      "roster": { "entries": [] }
+    }
+  ]
+}

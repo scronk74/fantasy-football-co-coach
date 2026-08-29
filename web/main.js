@@ -1,5 +1,6 @@
 // DOM wiring only. Every computation lives in render.js, which is tested.
 import { applyFilters, bestAvailable, boardHtml, playerId } from "./render.js";
+import { navHtml } from "./nav.js";
 
 const DRAFTED_KEY = "ffcoach.drafted";
 const EXPLAIN_KEY = "ffcoach.explain";
@@ -78,6 +79,8 @@ function wire() {
 }
 
 async function load() {
+  $("nav").innerHTML = navHtml("draft");
+
   try {
     const response = await fetch("data/board.json");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
