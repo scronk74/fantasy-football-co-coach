@@ -13,16 +13,29 @@ from typing import Protocol, runtime_checkable
 BENCH_SLOTS = ("BN", "IR")
 
 
+# Statuses that guarantee a zero. QUESTIONABLE and DOUBTFUL are deliberately
+# absent: they are uncertain, and acting on them is the inactives sweep's job,
+# not this one's.
+CERTAIN_OUT = ("OUT", "INJURY_RESERVE", "SUSPENSION", "IR")
+
+
 @dataclass(frozen=True)
 class RosterEntry:
     player_name: str
     position: str
     nfl_team: str
     lineup_slot: str
+    injury_status: str | None = None
 
     @property
     def is_starter(self) -> bool:
         return self.lineup_slot not in BENCH_SLOTS
+
+    @property
+    def is_certainly_out(self) -> bool:
+        if not self.injury_status:
+            return False
+        return self.injury_status.strip().upper() in CERTAIN_OUT
 
 
 @dataclass(frozen=True)

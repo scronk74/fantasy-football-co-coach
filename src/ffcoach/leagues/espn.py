@@ -77,11 +77,15 @@ def _normalize_swid(value: str) -> str:
 
 def _parse_entry(entry: dict) -> RosterEntry:
     player = entry.get("playerPoolEntry", {}).get("player", {})
+    # ESPN reports availability as injuryStatus (ACTIVE/QUESTIONABLE/OUT/
+    # INJURY_RESERVE) and separately as an `injured` boolean. The string is the
+    # useful one; the boolean cannot distinguish "questionable" from "out".
     return RosterEntry(
         player_name=player.get("fullName", ""),
         position=_POSITION_IDS.get(player.get("defaultPositionId"), "UNKNOWN"),
         nfl_team=_PRO_TEAM_ABBREVIATIONS.get(player.get("proTeamId"), "FA"),
         lineup_slot=_SLOT_IDS.get(entry.get("lineupSlotId"), "BN"),
+        injury_status=player.get("injuryStatus"),
     )
 
 
