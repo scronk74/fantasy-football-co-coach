@@ -108,6 +108,109 @@ Findings stay structured — `{kind, player, slot, replacement, delta, locks_at,
 reason}` — never prose. Deterministic Python decides *what is true*; wording is
 applied at the edge.
 
+## What the end-user journey exposed
+
+Walking the season from setup to championship surfaced requirements the
+feature-driven design missed. They are recorded here because most are not
+obvious from any single feature.
+
+### Which week is it
+
+Every part of this system is week-indexed, and until this review **nothing
+determined the week** — `find_problems` took it as a parameter no caller
+computed.
+
+**The week comes from ESPN's `scoringPeriodId`, not from the calendar.**
+Deriving it from today's date means owning the rollover moment, and a rollover
+bug alerts about the wrong week entirely — a silent, total failure. Taking
+ESPN's own number also guarantees agreement with whatever the league thinks the
+week is.
+
+### An empty starting slot is the most certain zero of all
+
+ESPN permits a starting slot to hold no player. That is a guaranteed zero, more
+certain than any injury designation — and the first implementation could not see
+it, because it iterated roster entries and **an empty slot has no entry to
+iterate.** The most elementary lineup failure in fantasy football was invisible.
+
+Empty slots are found by comparing the league's required starting slots against
+the slots actually filled, and carry the same severity as OUT.
+
+### Action deadline, not lock time
+
+The original design timed alerts off kickoff. That is the wrong deadline for a
+large class of problems.
+
+When a starter is out and **no bench player can replace him**, the fix is not a
+lineup swap — it is a waiver claim, and waivers process Wednesday morning. An
+alert at Sunday 10:00 is technically before the lineup locks and hopelessly
+after every useful replacement has been claimed.
+
+So each finding is alerted on **the earliest deadline that still permits its
+fix**:
+
+| Situation | Real deadline |
+|---|---|
+| Bench replacement exists | That player's kickoff |
+| No bench replacement | The waiver deadline — a claim is required |
+| Bye next week, thin at that position | This week's waiver deadline |
+
+**Bye weeks are therefore looked ahead**, not merely detected. Reacting during
+the bye week is structurally too late to acquire anyone worth starting.
+
+### Lineup lock is a league setting
+
+Some ESPN leagues lock every lineup at the first game of the week rather than
+per player. Under that rule, per-player timing is actively wrong: a Sunday
+morning alert about a Monday night starter is pointless, because he locked
+Thursday. The setting is read from `rosterSettings`; timing follows it rather
+than assuming.
+
+### Repeat policy, and why no acknowledgment channel is needed
+
+There is no server and no inbound path — a text message cannot be replied to.
+Building one would mean standing up infrastructure this project deliberately
+avoids.
+
+It is unnecessary, because **the roster is the acknowledgment.** Every check
+re-reads it. A fixed problem stops being a finding on its own.
+
+For a problem left unfixed, the policy is **two strikes**: once on discovery,
+once more ninety minutes before the relevant kickoff, then silence. Bounded at
+two messages whether the user acts or deliberately chooses to live with it.
+
+### First run must not flood
+
+Configured mid-season with an empty alert history, a naive implementation fires
+every outstanding problem at once. First run sends **one summary**, then
+normal behavior afterwards.
+
+### Delivery failure is distinct from check failure
+
+The dead-man's switch catches "no check ran." It does not catch "the check ran,
+an alert was sent, and it never arrived" — ntfy down, a bounced email, a
+carrier gateway silently dropping a message. Send failures are recorded and
+retried through a second configured channel when one exists.
+
+### Season arc
+
+- **Fantasy playoffs (weeks 15–17)** raise the stakes without changing mechanics.
+- **NFL Week 18 is a trap**: teams with seeding locked rest starters, and that
+  falls in championship weeks for many leagues. Resting risk is flagged.
+- **Elimination awareness**: once mathematically out of contention, alerts go
+  quiet. A lost season should stop buzzing the user's phone.
+
+### Roster limits make waiver advice incomplete
+
+A full roster means adding requires dropping. "Claim Pittman" is not actionable
+without naming a drop candidate, so waiver suggestions include one.
+
+### Multiple leagues
+
+The user plays in one league today and may add another. Nothing is hardcoded to
+a single league — config is a list of one — but per-league UI and alert
+attribution are not built until a second league exists.
+
 ## The alert model
 
 ### Two tiers
@@ -124,9 +227,10 @@ Zero interrupts in a clean week is the system working, not the system broken.
 Only the interrupt tier is allowed to buzz the phone, and only three kinds
 qualify:
 
-1. **Starter on bye** — certain, detected days ahead.
-2. **Starter ruled OUT / IR** — certain.
-3. **Starter downgraded to OUT close to kickoff** — the inactives sweep below.
+1. **Empty starting slot** — the most certain zero there is.
+2. **Starter on bye** — certain, detected days ahead and looked ahead one week.
+3. **Starter ruled OUT / IR** — certain.
+4. **Starter downgraded to OUT close to kickoff** — the inactives sweep below.
 
 Note what these three share: **each is a fact, not an estimate.** A player on
 bye scores zero. A player ruled OUT scores zero. Nothing about them depends on a
@@ -186,16 +290,26 @@ appear to work and silently fail on exactly the Sunday mornings that matter.
 `launchd`'s `StartCalendarInterval` runs on wake, and `pmset repeat wake` can
 wake the machine ahead of each window.
 
-Checks are timed off **each player's actual kickoff**, not a single weekly sweep.
-NFL weeks lock in five separate windows (Thu night, Sun 1pm, Sun 4pm, Sun night,
-Mon night); one "24 hours before the week" alarm would fire uselessly for some
-players and far too late for others. Kickoff times come from the free nflverse
-schedule.
+Checks are timed off **the deadline that permits each finding's fix**, not a
+single weekly sweep and not kickoff alone. Two facts drive this:
+
+1. **A week does not lock at once.** Week 8 of 2025 has six distinct windows,
+   measured from the schedule: Thu 20:15, Sun 13:00, Sun 16:05, Sun 16:25,
+   Sun 20:20, Mon 20:15. A single weekly alarm fires days early for
+   Monday-night players and after kickoff for Thursday ones.
+2. **Some fixes are not lineup swaps.** A problem with no bench replacement
+   needs a waiver claim, whose deadline is Tuesday night — long before any
+   kickoff. See *Action deadline, not lock time* above.
+
+Kickoff times come from the free nflverse schedule. Where the league locks all
+lineups at the first game of the week, per-player timing collapses to that
+single deadline, read from `rosterSettings`.
 
 | Job | When | Purpose |
 |---|---|---|
-| Lineup check | ~24h and ~3h before each lock window | Byes, OUT, IR |
-| Inactives sweep | ~90m before each kickoff | Newly-OUT Questionable starters |
+| Waiver-deadline check | Tuesday, before claims process | Problems needing an add; next week's byes |
+| Lineup check | ~24h and ~3h before each lock window | Empty slots, byes, OUT, IR |
+| Inactives sweep | ~90m before each kickoff | Newly-OUT Questionable starters; second strike on anything still broken |
 | Weekly digest | Tuesday morning | Results, banter, upgrades, injury notes |
 | Heartbeat | Hourly | Dead-man's switch |
 
@@ -350,7 +464,7 @@ behind the aggregation that makes it trustworthy.
 
 | Phase | Delivers | Gate |
 |---|---|---|
-| **1** | Bye/OUT/IR alerts, NFL schedule, three channels, quiet hours, dedupe, `ffcoach init`, dead-man's switch | — |
+| **1** | Week from ESPN, empty-slot + bye/OUT/IR detection, bye look-ahead, action-deadline alerting, NFL schedule, three channels, quiet hours, two-strike repeat policy, first-run summary, `ffcoach init`, dead-man's switch | — |
 | **2** | `launchd` install, per-window scheduling, inactives sweep | Phase 1 proven |
 | **3** | Projection aggregation (ESPN + Sleeper + derived), accuracy weighting, decision log | — |
 | **4** | Bench-upgrade alerts (digest tier), score swings | Phase 3 — projections must be trustworthy first |
