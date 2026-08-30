@@ -6,8 +6,9 @@
 **Stage goal:** the advisor correctly identifies every starter who cannot score this week, knows which
 week it is, and knows the real deadline for fixing each problem.
 
-Gated by [R-1](../../ROADMAP.md#7-roadblocks) for live verification, but **all of it is buildable and
-testable against fixtures today.**
+**Status: complete (5/5), 2026-08-30.** [R-1](../../ROADMAP.md#7-roadblocks) still gates *live
+verification* — every module here is proven against fixtures, not against a real ESPN league — but no
+step in the stage turned out to require the invite to build.
 
 ---
 
@@ -104,18 +105,41 @@ league publishes nothing the deadline is `None`, never fabricated.
 
 ---
 
-## C5 — Read the lineup-lock setting · Backlog
+## C5 — Read the lineup-lock setting · Done *(2026-08-30)*
 
 Some ESPN leagues lock **all** lineups at the week's first game rather than per player. Under that
 rule, per-player timing is actively wrong — a Sunday alert about a Monday-night starter is pointless
 because he locked Thursday.
 
-- [ ] **C5.1** — ~~Find the field~~ **Found while building C2**: `rosterSettings.lineupLocktimeType`,
+- [x] **C5.1** — ~~Find the field~~ **Found while building C2**: `rosterSettings.lineupLocktimeType`,
       which returned `"INDIVIDUAL_GAME"` on the live public league. (An earlier note named
-      `lineupLockTimeOffset` — that field returned `None` and is *not* the right one.) The
-      weekly-lock value is still unknown; R-1 or another public league would confirm it.
-- [ ] **C5.2** — Model it as an enum: per-player vs weekly lock.
-- [ ] **C5.3** — When weekly, collapse all deadlines to the week's first kickoff.
-- [ ] **C5.4** — Default to per-player and **log the assumption** when the setting is absent.
+      `lineupLockTimeOffset` — that field returned `None` and is *not* the right one.)
+- [x] **C5.2** — `LockMode` enum + `LineupLock` (mode, raw, `assumed`, `unrecognized`, `note`) in
+      `leagues/base.py`, mirroring `WeekResolution`'s value-plus-provenance idiom.
+- [x] **C5.3** — `advisors/lineup.lock_time()`. Under a weekly lock every player's lock resolves to
+      `schedule.lock_windows(week)[0]`, so `fix_deadline`'s `min()` collapses the whole roster to one
+      deadline without special-casing.
+- [x] **C5.4** — Absent setting → per-player, and `ffcoach league` prints the assumption to stderr
+      beside the existing derived-week note.
 
-**Depends on R-1** for real confirmation of the field's semantics.
+### R-1 turned out not to gate this
+
+The board said C5 needed a real league to learn the weekly-lock spelling. It did not. ESPN offers
+exactly two lock rules and the **default** one is verified live, so matching `INDIVIDUAL_GAME` and
+treating anything else as weekly needs only the value we already have. The asymmetry with *absence*
+is deliberate: a present-but-unfamiliar value is evidence the league chose the non-default rule;
+absence is no evidence at all, so it falls back to the default and says so. Unrecognized also fails
+toward the **earlier** deadline, which alerts too soon rather than too late.
+
+### Defect found and fixed here (predates C5)
+
+A deadline could land *after* the lock — a waiver run processing Friday advertised as the fix for a
+slot that froze Thursday, which reads as "you still have time" at exactly the moment you have none.
+`fix_deadline` now clamps to the lock. This was live in C4 under per-player locking too, not only
+under the weekly rule; the weekly demonstration is just what made it visible.
+
+`kickoff` and `locks_at` are kept as separate fields on `LineupFinding`: under a weekly lock they are
+different facts — when he plays, versus when you lose the ability to bench him.
+
+**Still wants R-1** to confirm the weekly value's actual spelling, but only to move it from the
+`unrecognized` branch to a recognized one. Behavior is already correct either way.

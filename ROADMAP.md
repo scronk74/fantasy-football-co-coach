@@ -21,10 +21,10 @@ split_threshold: 8
 
 | | |
 |---|---|
-| **Date** | 2026-08-29 |
+| **Date** | 2026-08-30 |
 | **Branch** | `in-season-alerting-spec` · PR: — (4 merged) |
-| **Tests** | 279 Python + 38 JS, all green · CI gates both on every PR |
-| **Phase** | Stage C 80% — only C5 (lineup-lock) left, partly gated by R-1 |
+| **Tests** | 295 Python + 38 JS, all green · CI gates both on every PR |
+| **Phase** | **Stage C complete (5/5).** Detection is done; next is Stage D — notifications |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-1](#7-roadblocks) — no league invite yet (no league ID, no cookies) |
 
@@ -171,7 +171,7 @@ flowchart LR
 | C2 | Empty-slot detection | Done | 🟢 V1 | — | C1 | **H** | D-012 | ✅ 2026-08-29 |
 | C3 | Current week from ESPN `scoringPeriodId` | Done | 🟢 V1 | — | B1 | M | D-013 | ✅ 2026-08-29 |
 | C4 | Action-deadline alerting + bye look-ahead | Done | 🟢 V1 | — | C3 | M | D-014 | ✅ 2026-08-29 |
-| C5 | Read lineup-lock league setting | Backlog | 🟢 V1 | Week 1 | B1 | M | D-015 | ✅ 2026-08-29 |
+| C5 | Read lineup-lock league setting | Done | 🟢 V1 | — | B1 | M | D-015 | ✅ 2026-08-29 |
 | D1 | `Notifier` interface + **ntfy first** | Backlog | 🟢 V1 | Week 1 | C2 | M | D-016, D-042 | ✅ 2026-08-29 |
 | D2 | Message rendering (160-char SMS budget) | Backlog | 🟢 V1 | Week 1 | D1 | L | D-017 | ✅ 2026-08-29 |
 | D3 | Quiet hours + two-strike repeat policy | Backlog | 🟢 V1 | Week 1 | D1 | M | D-018, D-019 | ✅ 2026-08-29 |
@@ -200,8 +200,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 4/5 (80%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 12/40 steps done (30%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 5/5 (100%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 13/40 steps done (33%).
 
 ## 4. Done ledger
 
@@ -288,7 +288,7 @@ flowchart LR
 
 ## 7. Roadblocks
 
-- **R-1 — No league invite yet.** *Gates:* verifying the ESPN parser against real data; `espn.yaml`; real league settings; C3, C5; anything running against a live league. *What must change:* the user is invited and supplies league ID + `espn_s2`/`SWID` cookies. *Why it matters:* `leagues/espn.py` was built against a **hand-written fixture** derived from community docs — tests passing proves internal consistency, **not** that it matches ESPN. Expect field-name corrections. *Who decides:* league commissioner, then user. *Linked:* B1, C3, C5, Q-2.
+- **R-1 — No league invite yet.** *Gates:* verifying the ESPN parser against real data; `espn.yaml`; real league settings; anything running against a live league. **No longer gates C5** — C5 was unblocked by recognizing only the *default* lock value and treating any other as the alternative, so the unverified spelling was never needed. *What must change:* the user is invited and supplies league ID + `espn_s2`/`SWID` cookies. *Why it matters:* `leagues/espn.py` was built against a **hand-written fixture** derived from community docs — tests passing proves internal consistency, **not** that it matches ESPN. Expect field-name corrections. *Who decides:* league commissioner, then user. *Linked:* B1, Q-2.
 - **R-2 — `launchd` correctness is untestable in CI.** *Gates:* confidence in E2/E3. *What must change:* a real install-and-wait-a-day check on the actual iMac. *Why:* the failure mode is silence, which looks identical to success. *Who decides:* user (manual verification). *Linked:* E2, E3.
 
 ## 8. Validation & test-coverage status
