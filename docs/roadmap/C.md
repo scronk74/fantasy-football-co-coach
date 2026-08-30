@@ -75,7 +75,7 @@ than defaulting.
 
 ---
 
-## C4 — Action-deadline alerting + bye look-ahead · Backlog
+## C4 — Action-deadline alerting + bye look-ahead ✅ Done *(2026-08-30)*
 
 **The reframe (D-014).** Alerts were timed off kickoff. That is the wrong deadline whenever the fix is
 not a lineup swap: a starter who is out with **no bench replacement** needs a waiver claim, and waivers
@@ -88,11 +88,19 @@ useful replacement is gone.
 | No bench replacement | Waiver deadline — a claim is required |
 | Bye next week, thin at that position | This week's waiver deadline |
 
-- [ ] **C4.1** — Add `deadline` and `needs_waiver` to `LineupFinding`.
-- [ ] **C4.2** — Compute deadline from replacement availability, not kind.
-- [ ] **C4.3** — Bye look-ahead: scan week + 1, flag positions with no healthy alternative.
-- [ ] **C4.4** — Waiver-processing time: a league setting; read it, don't assume Wednesday.
-- [ ] **C4.5** — Tests: same finding yields different deadlines depending on bench depth.
+- [x] **C4.1** — Add `deadline` and `needs_waiver` to `LineupFinding`.
+- [x] **C4.2** — Compute deadline from replacement availability, not kind.
+- [x] **C4.3** — Bye look-ahead: scan week + 1, flag positions with no healthy alternative.
+- [x] **C4.4** — Waiver-processing time: a league setting; read it, don't assume Wednesday.
+- [x] **C4.5** — Tests: same finding yields different deadlines depending on bench depth.
+
+**Outcome:** `src/ffcoach/model/deadlines.py` + 13 tests. Fixture demo: **five problems due
+Wed 11:00, one due Sun 13:00**. Under the old scheme all six read Sun 13:00 — the user would
+have heard about them Sunday morning, four days after the claim window closed.
+
+**C4.4 correction:** the assumption was wrong. ESPN's live default league processes waivers
+**six days a week at 11:00**, not Wednesday morning. Read from `acquisitionSettings`; when a
+league publishes nothing the deadline is `None`, never fabricated.
 
 ---
 

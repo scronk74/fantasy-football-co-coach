@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-08-29 |
 | **Branch** | `in-season-alerting-spec` · PR: — (4 merged) |
-| **Tests** | 252 Python + 38 JS, all green · CI gates both on every PR |
-| **Phase** | Stage C 60% — detection solid; next is action deadlines (C4) |
+| **Tests** | 279 Python + 38 JS, all green · CI gates both on every PR |
+| **Phase** | Stage C 80% — only C5 (lineup-lock) left, partly gated by R-1 |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-1](#7-roadblocks) — no league invite yet (no league ID, no cookies) |
 
@@ -170,7 +170,7 @@ flowchart LR
 | C1 | Lineup advisor: bye / OUT / IR | Done | 🟢 V1 | — | B1, B4 | L | D-010, D-011 | ✅ 2026-08-29 |
 | C2 | Empty-slot detection | Done | 🟢 V1 | — | C1 | **H** | D-012 | ✅ 2026-08-29 |
 | C3 | Current week from ESPN `scoringPeriodId` | Done | 🟢 V1 | — | B1 | M | D-013 | ✅ 2026-08-29 |
-| C4 | Action-deadline alerting + bye look-ahead | Backlog | 🟢 V1 | Week 1 | C3 | M | D-014 | ✅ 2026-08-29 |
+| C4 | Action-deadline alerting + bye look-ahead | Done | 🟢 V1 | — | C3 | M | D-014 | ✅ 2026-08-29 |
 | C5 | Read lineup-lock league setting | Backlog | 🟢 V1 | Week 1 | B1 | M | D-015 | ✅ 2026-08-29 |
 | D1 | `Notifier` interface + **ntfy first** | Backlog | 🟢 V1 | Week 1 | C2 | M | D-016, D-042 | ✅ 2026-08-29 |
 | D2 | Message rendering (160-char SMS budget) | Backlog | 🟢 V1 | Week 1 | D1 | L | D-017 | ✅ 2026-08-29 |
@@ -200,8 +200,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 3/5 (60%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 11/40 steps done (28%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 4/5 (80%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 12/40 steps done (30%).
 
 ## 4. Done ledger
 
@@ -214,6 +214,7 @@ flowchart LR
 | **Identity crosswalk** (PR #4) | 240/240 draftable players carry ESPN/MFL/GSIS ids. Absorbed the `"NA"` sentinel and `merge_name` alias traps. |
 | **NFL schedule** | Byes derived (32/32 teams), 6 lock windows/week measured. Caught the `LA`/`LAR` + `WAS`/`WSH` mismatch that would have silently killed bye alerts for two teams. |
 | **Lineup advisor** | Bye/OUT/IR detection with eligible-replacement naming. QUESTIONABLE deliberately excluded. |
+| **Action deadlines** (C4) | Deadline follows the available fix, not kickoff. Waiver timing read from ESPN (six days/wk at 11:00 — the Wednesday assumption was wrong). Bye look-ahead flags next week's uncovered byes while claims still help. |
 | **Week resolution** (C3) | ESPN `scoringPeriodId` is authoritative and short-circuits before any schedule fetch; derivation is fallback-only and self-labels. Refuses rather than defaulting when neither is available. |
 | **Empty-slot detection** (C2) | Closed a correctness hole: an empty starting slot had no roster entry to iterate, so the most elementary lineup failure was invisible. Slot counts come from ESPN `lineupSlotCounts`. Fixture proof: 1 finding before, 6 after. |
 
