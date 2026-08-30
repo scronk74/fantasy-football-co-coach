@@ -124,6 +124,65 @@ def test_league_missing_espn_config_exits_nonzero_without_fixture(tmp_path):
     assert code == 1
 
 
+def test_league_takes_the_week_from_espn(tmp_path):
+    """The fixture carries scoringPeriodId=5.
+
+    ESPN's number short-circuits before any schedule fetch, so this needs no
+    network and no cached schedule.
+    """
+    out = tmp_path / "league.json"
+    code = main([
+        "league",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(tmp_path / "c.sqlite3"),
+        "--out", str(out),
+        "--season", "2025",
+    ])
+    assert code == 0
+    payload = json.loads(out.read_text())
+    assert payload["week"] == 5
+    assert payload["week_source"] == "espn"
+
+
+def test_league_payload_carries_roster_slots(tmp_path):
+    """Needed by the empty-slot check; must survive to the browser."""
+    out = tmp_path / "league.json"
+    main([
+        "league",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(tmp_path / "c.sqlite3"),
+        "--out", str(out),
+        "--season", "2025",
+    ])
+    slots = json.loads(out.read_text())["league"]["roster_slots"]
+    assert slots["RB"] == 2
+    assert slots["FLEX"] == 1
+
+
+def test_league_refuses_rather_than_guessing_the_week(tmp_path):
+    """No week from ESPN and no schedule available: exit nonzero, never default."""
+    stripped = json.loads((FIXTURES / "espn_league.json").read_text())
+    stripped.pop("scoringPeriodId", None)
+    stripped.get("status", {}).pop("currentMatchupPeriod", None)
+    fixture = tmp_path / "no_week.json"
+    fixture.write_text(json.dumps(stripped))
+
+    cache_db = tmp_path / "c.sqlite3"
+    from ffcoach.cache import Cache
+    from ffcoach.sources.schedule import _cache_key
+    # Seed an empty schedule so nothing reaches the network.
+    Cache(cache_db).set(_cache_key(2025), "game_id,season,game_type,week,gameday\n", 3600)
+
+    code = main([
+        "league",
+        "--fixture", str(fixture),
+        "--cache", str(cache_db),
+        "--out", str(tmp_path / "league.json"),
+        "--season", "2025",
+    ])
+    assert code == 1
+
+
 def test_league_missing_fixture_file_exits_nonzero(tmp_path):
     code = main([
         "league",

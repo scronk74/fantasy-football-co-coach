@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from ffcoach.leagues.base import LockMode
 from ffcoach.leagues.espn_client import EspnUnavailable
 from ffcoach.leagues.espn import parse_league
 
@@ -96,6 +97,99 @@ def test_parse_handles_an_empty_roster(raw):
     league = parse_league(raw)
     disasters = next(t for t in league.teams if t.name == "Disasters")
     assert disasters.roster == ()
+
+
+def test_parse_reads_lineup_slot_counts(raw):
+    league = parse_league(raw)
+    assert league.roster_slots["QB"] == 1
+    assert league.roster_slots["RB"] == 2
+    assert league.roster_slots["FLEX"] == 1
+
+
+def test_parse_drops_slots_the_league_does_not_use(raw):
+    """ESPN lists every slot in the game, most with a count of zero."""
+    league = parse_league(raw)
+    assert all(count > 0 for count in league.roster_slots.values())
+
+
+def test_starting_slots_exclude_bench_and_ir(raw):
+    league = parse_league(raw)
+    assert "BN" in league.roster_slots
+    assert "BN" not in league.starting_slots
+    assert "IR" not in league.starting_slots
+
+
+def test_parse_takes_the_week_from_espn(raw):
+    league = parse_league(raw)
+    assert league.current_week == 5
+
+
+def test_current_week_is_none_when_espn_omits_it():
+    league = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}')
+    assert league.current_week is None
+
+
+def test_roster_slots_are_empty_when_settings_are_absent():
+    """No settings means the empty-slot check is skipped, never guessed."""
+    league = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}')
+    assert league.roster_slots == {}
+
+
+def test_parse_reads_waiver_settings(raw):
+    w = parse_league(raw).waivers
+    assert w.is_known
+    assert "WEDNESDAY" in w.process_days
+    assert w.process_hour == 11
+
+
+def test_waiver_budget_flag_is_read(raw):
+    """Spec UX rule 5: no dollar figure unless the league actually uses one."""
+    assert parse_league(raw).waivers.uses_budget is False
+
+
+def test_waivers_are_unknown_rather_than_assumed_when_absent():
+    w = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}').waivers
+    assert w.is_known is False
+    assert w.process_days == ()
+
+
+def test_parse_reads_the_per_player_lock_verified_live(raw):
+    """`INDIVIDUAL_GAME` is the one value confirmed against a real league."""
+    lock = parse_league(raw).lineup_lock
+    assert lock.mode is LockMode.PER_PLAYER
+    assert lock.is_weekly is False
+    assert lock.assumed is False
+    assert lock.note is None  # read and understood: nothing to log
+
+
+def test_absent_lock_setting_defaults_to_per_player_and_says_so():
+    lock = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}').lineup_lock
+    assert lock.mode is LockMode.PER_PLAYER
+    assert lock.assumed is True
+    assert "assuming" in lock.note
+
+
+def test_an_unfamiliar_lock_value_is_read_as_weekly():
+    """ESPN offers two lock rules. Not the default one means the other.
+
+    This is what makes the setting knowable without ever having seen a
+    weekly-lock league: only the default's spelling had to be verified.
+    """
+    raw = (
+        '{"seasonId": 2026, "teams": [], "settings": {"rosterSettings":'
+        ' {"lineupLocktimeType": "FIRST_GAME_OF_WEEK"}}}'
+    )
+    lock = parse_league(raw).lineup_lock
+    assert lock.is_weekly is True
+    assert lock.unrecognized is True
+    assert lock.raw == "FIRST_GAME_OF_WEEK"
+    assert "fails safe" in lock.note
+
+
+def test_unfamiliar_lock_value_fails_toward_the_earlier_deadline():
+    """Guessing weekly alerts too early; guessing per-player alerts too late."""
+    raw = '{"seasonId": 2026, "teams": [], "settings": {"rosterSettings": {"lineupLocktimeType": "SOMETHING_NEW"}}}'
+    assert parse_league(raw).lineup_lock.mode is LockMode.WEEKLY
 
 
 def test_parse_rejects_malformed_json():

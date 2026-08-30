@@ -227,3 +227,6 @@ league.yaml
 
 # session credentials, not template — edit your own after copying espn.example.yaml
 espn.yaml
+
+# visual brainstorming scratch
+.superpowers/

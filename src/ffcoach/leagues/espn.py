@@ -13,7 +13,15 @@ from __future__ import annotations
 
 import json
 
-from ffcoach.leagues.base import League, RosterEntry, Team
+from ffcoach.leagues.base import (
+    PER_PLAYER_LOCKTIME,
+    League,
+    LineupLock,
+    LockMode,
+    RosterEntry,
+    Team,
+    WaiverSettings,
+)
 from ffcoach.leagues.espn_client import EspnUnavailable
 
 # ESPN's defaultPositionId per player.
@@ -77,11 +85,15 @@ def _normalize_swid(value: str) -> str:
 
 def _parse_entry(entry: dict) -> RosterEntry:
     player = entry.get("playerPoolEntry", {}).get("player", {})
+    # ESPN reports availability as injuryStatus (ACTIVE/QUESTIONABLE/OUT/
+    # INJURY_RESERVE) and separately as an `injured` boolean. The string is the
+    # useful one; the boolean cannot distinguish "questionable" from "out".
     return RosterEntry(
         player_name=player.get("fullName", ""),
         position=_POSITION_IDS.get(player.get("defaultPositionId"), "UNKNOWN"),
         nfl_team=_PRO_TEAM_ABBREVIATIONS.get(player.get("proTeamId"), "FA"),
         lineup_slot=_SLOT_IDS.get(entry.get("lineupSlotId"), "BN"),
+        injury_status=player.get("injuryStatus"),
     )
 
 
@@ -131,4 +143,79 @@ def parse_league(raw: str, my_swid: str | None = None) -> League:
         teams=tuple(
             _parse_team(row, member_names, my_swid) for row in payload.get("teams", [])
         ),
+        roster_slots=_parse_roster_slots(payload),
+        current_week=_parse_current_week(payload),
+        waivers=_parse_waivers(payload),
+        lineup_lock=_parse_lineup_lock(payload),
     )
+
+
+def _parse_lineup_lock(payload: dict) -> LineupLock:
+    """`rosterSettings.lineupLocktimeType` -> a lock mode plus its provenance.
+
+    Only the per-player spelling is matched, because it is the only one seen
+    live. A present-but-unfamiliar value is read as weekly rather than shrugged
+    off: ESPN offers exactly two lock rules, so a non-default value is evidence
+    the league chose the other one. Absence is *not* such evidence -- it is no
+    evidence at all -- so it falls back to ESPN's default and says so. That
+    asymmetry is deliberate.
+    """
+    raw = payload.get("settings", {}).get("rosterSettings", {}).get("lineupLocktimeType")
+    if raw is None:
+        return LineupLock(mode=LockMode.PER_PLAYER, raw=None, assumed=True)
+    text = str(raw).strip().upper()
+    if text == PER_PLAYER_LOCKTIME:
+        return LineupLock(mode=LockMode.PER_PLAYER, raw=str(raw))
+    return LineupLock(mode=LockMode.WEEKLY, raw=str(raw), unrecognized=True)
+
+
+def _parse_waivers(payload: dict) -> WaiverSettings:
+    a = payload.get("settings", {}).get("acquisitionSettings") or {}
+    days = a.get("waiverProcessDays") or []
+    try:
+        hour = int(a.get("waiverProcessHour", 0))
+    except (TypeError, ValueError):
+        hour = 0
+    return WaiverSettings(
+        process_days=tuple(str(d).upper() for d in days),
+        process_hour=hour,
+        uses_budget=bool(a.get("isUsingAcquisitionBudget")),
+    )
+
+
+def _parse_roster_slots(payload: dict) -> dict[str, int]:
+    """Lineup slot counts from `rosterSettings.lineupSlotCounts`.
+
+    ESPN keys this by slot id as a string and lists every slot in the game,
+    most with a count of zero. Only non-zero, recognized slots are kept -- the
+    zeros are slots this league does not use.
+    """
+    counts = (
+        payload.get("settings", {}).get("rosterSettings", {}).get("lineupSlotCounts")
+        or {}
+    )
+    out: dict[str, int] = {}
+    for slot_id, count in counts.items():
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            continue
+        name = _SLOT_IDS.get(int(slot_id)) if str(slot_id).lstrip("-").isdigit() else None
+        if name and n > 0:
+            out[name] = out.get(name, 0) + n
+    return out
+
+
+def _parse_current_week(payload: dict) -> int | None:
+    """ESPN's own week number, preferred over anything we could derive."""
+    for value in (
+        payload.get("scoringPeriodId"),
+        payload.get("status", {}).get("currentMatchupPeriod"),
+    ):
+        try:
+            week = int(value)
+        except (TypeError, ValueError):
+            continue
+        if week > 0:
+            return week
+    return None
