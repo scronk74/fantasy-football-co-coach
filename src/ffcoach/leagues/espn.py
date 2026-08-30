@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 
-from ffcoach.leagues.base import League, RosterEntry, Team
+from ffcoach.leagues.base import League, RosterEntry, Team, WaiverSettings
 from ffcoach.leagues.espn_client import EspnUnavailable
 
 # ESPN's defaultPositionId per player.
@@ -137,6 +137,21 @@ def parse_league(raw: str, my_swid: str | None = None) -> League:
         ),
         roster_slots=_parse_roster_slots(payload),
         current_week=_parse_current_week(payload),
+        waivers=_parse_waivers(payload),
+    )
+
+
+def _parse_waivers(payload: dict) -> WaiverSettings:
+    a = payload.get("settings", {}).get("acquisitionSettings") or {}
+    days = a.get("waiverProcessDays") or []
+    try:
+        hour = int(a.get("waiverProcessHour", 0))
+    except (TypeError, ValueError):
+        hour = 0
+    return WaiverSettings(
+        process_days=tuple(str(d).upper() for d in days),
+        process_hour=hour,
+        uses_budget=bool(a.get("isUsingAcquisitionBudget")),
     )
 
 

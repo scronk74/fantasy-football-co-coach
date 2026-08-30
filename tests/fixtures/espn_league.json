@@ -23,6 +23,21 @@
         "9": 0
       },
       "lineupLocktimeType": "INDIVIDUAL_GAME"
+    },
+    "acquisitionSettings": {
+      "acquisitionType": "WAIVERS_TRADITIONAL",
+      "isUsingAcquisitionBudget": false,
+      "waiverProcessDays": [
+        "MONDAY",
+        "WEDNESDAY",
+        "THURSDAY",
+        "FRIDAY",
+        "SATURDAY",
+        "SUNDAY"
+      ],
+      "waiverProcessHour": 11,
+      "acquisitionBudget": 100,
+      "minimumBid": 1
     }
   },
   "members": [

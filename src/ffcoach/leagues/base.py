@@ -59,6 +59,27 @@ class Team:
 
 
 @dataclass(frozen=True)
+class WaiverSettings:
+    """When claims process, and whether the league bids money for them.
+
+    Read rather than assumed: the ESPN default league processes waivers on
+    *six* days a week at 11:00, not the "Wednesday morning" a reasonable
+    person would guess. Getting this wrong means alerting after the claim
+    window rather than before it, which is the whole point of the deadline.
+    """
+
+    process_days: tuple[str, ...] = ()
+    process_hour: int = 0
+    # False means waiver priority rather than FAAB. Spec UX rule 5: never
+    # render a dollar figure unless the league actually uses one.
+    uses_budget: bool = False
+
+    @property
+    def is_known(self) -> bool:
+        return bool(self.process_days)
+
+
+@dataclass(frozen=True)
 class League:
     name: str
     season: int
@@ -71,6 +92,7 @@ class League:
     # calendar means owning the rollover moment, and a rollover bug alerts
     # about the wrong week entirely.
     current_week: int | None = None
+    waivers: WaiverSettings = WaiverSettings()
 
     @property
     def starting_slots(self) -> dict[str, int]:

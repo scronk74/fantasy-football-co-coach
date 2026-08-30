@@ -134,6 +134,24 @@ def test_roster_slots_are_empty_when_settings_are_absent():
     assert league.roster_slots == {}
 
 
+def test_parse_reads_waiver_settings(raw):
+    w = parse_league(raw).waivers
+    assert w.is_known
+    assert "WEDNESDAY" in w.process_days
+    assert w.process_hour == 11
+
+
+def test_waiver_budget_flag_is_read(raw):
+    """Spec UX rule 5: no dollar figure unless the league actually uses one."""
+    assert parse_league(raw).waivers.uses_budget is False
+
+
+def test_waivers_are_unknown_rather_than_assumed_when_absent():
+    w = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}').waivers
+    assert w.is_known is False
+    assert w.process_days == ()
+
+
 def test_parse_rejects_malformed_json():
     with pytest.raises(EspnUnavailable, match="parse"):
         parse_league("<html>nope</html>")
