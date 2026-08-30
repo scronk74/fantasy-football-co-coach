@@ -101,3 +101,30 @@ def test_the_starters_own_kickoff_can_be_the_binding_deadline():
     """His slot locks before the replacement plays."""
     deadline, _ = fix_deadline(KICK_EARLY, (KICK_LATE,), WAIVER)
     assert deadline == KICK_EARLY
+
+
+# --- the lock is a ceiling on every deadline ---
+#
+# A claim that processes after the slot freezes cannot be started that week.
+# Before this clamp a locked slot advertised a future waiver deadline, which
+# reads as "you still have time" at exactly the moment you have none.
+
+LATE_WAIVER = et(2025, 9, 16, 11)  # after both kickoffs above
+
+
+def test_a_waiver_run_after_the_lock_cannot_be_the_deadline():
+    deadline, needs = fix_deadline(KICK_EARLY, (), LATE_WAIVER)
+    assert deadline == KICK_EARLY
+    assert needs is True
+
+
+def test_the_deadline_never_lands_after_the_lock():
+    for waiver in (WAIVER, LATE_WAIVER):
+        deadline, _ = fix_deadline(KICK_EARLY, (), waiver)
+        assert deadline <= KICK_EARLY
+
+
+def test_a_waiver_run_before_the_lock_still_governs():
+    """The clamp must not swallow the case it was built around."""
+    deadline, _ = fix_deadline(KICK_LATE, (), WAIVER)
+    assert deadline == WAIVER

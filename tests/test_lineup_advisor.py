@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from ffcoach.advisors.lineup import actionable, find_problems, find_replacements
-from ffcoach.leagues.base import RosterEntry, Team
+from ffcoach.leagues.base import LineupLock, LockMode, RosterEntry, Team
 from ffcoach.sources.schedule import parse_schedule
 
 SCHEDULE = Path(__file__).parent / "fixtures" / "nfl_schedule_2025.csv"
@@ -502,3 +502,112 @@ def test_no_finding_ever_emits_a_dollar_figure(schedule, week):
     )
     for finding in find_problems(team, schedule, week, EARLY):
         assert "$" not in finding.reason
+
+
+# --- weekly lineup lock (C5) ---
+#
+# Some ESPN leagues freeze every slot at the week's first kickoff instead of
+# per player. Under that rule the per-player timing this advisor was built on
+# is not merely imprecise, it is wrong: a Sunday alert about a Monday-night
+# starter is useless because he locked on Thursday.
+
+WEEKLY = LineupLock(mode=LockMode.WEEKLY, raw="FIRST_GAME_OF_WEEK")
+PER_PLAYER = LineupLock(mode=LockMode.PER_PLAYER, raw="INDIVIDUAL_GAME")
+
+
+@pytest.fixture(scope="module")
+def late_team(schedule, week):
+    """A team whose game is not the week's first -- the case that diverges."""
+    first = schedule.lock_windows(week)[0]
+    for t in sorted(schedule.teams):
+        kick = schedule.kickoff(t, week)
+        if kick is not None and kick > first:
+            return t
+    raise AssertionError("no later game in fixture week")
+
+
+def test_weekly_lock_freezes_a_late_starter_at_the_weeks_first_kickoff(
+    schedule, week, late_team
+):
+    first = schedule.lock_windows(week)[0]
+    team = team_with(entry("Late Guy", "WR", late_team, injury="OUT"))
+    found = find_problems(team, schedule, week, EARLY, lock=WEEKLY)[0]
+    assert found.locks_at == first
+
+
+def test_per_player_lock_freezes_him_at_his_own_kickoff(schedule, week, late_team):
+    team = team_with(entry("Late Guy", "WR", late_team, injury="OUT"))
+    found = find_problems(team, schedule, week, EARLY, lock=PER_PLAYER)[0]
+    assert found.locks_at == schedule.kickoff(late_team, week)
+    assert found.locks_at > schedule.lock_windows(week)[0]
+
+
+def test_weekly_lock_reports_him_locked_once_the_first_game_has_started(
+    schedule, week, late_team
+):
+    """The whole point: he is unmovable well before he plays."""
+    just_after_first = schedule.lock_windows(week)[0] + dt.timedelta(minutes=1)
+    team = team_with(entry("Late Guy", "WR", late_team, injury="OUT"))
+    found = find_problems(team, schedule, week, just_after_first, lock=WEEKLY)[0]
+    assert found.locked is True
+    assert found.kickoff > just_after_first  # he has not even played yet
+
+
+def test_the_same_moment_is_still_actionable_under_per_player_locking(
+    schedule, week, late_team
+):
+    just_after_first = schedule.lock_windows(week)[0] + dt.timedelta(minutes=1)
+    team = team_with(entry("Late Guy", "WR", late_team, injury="OUT"))
+    found = find_problems(team, schedule, week, just_after_first, lock=PER_PLAYER)[0]
+    assert found.locked is False
+
+
+def test_weekly_lock_keeps_the_real_kickoff_separate_from_the_lock(
+    schedule, week, late_team
+):
+    """`kickoff` is when he plays; `locks_at` is when you lose the choice."""
+    team = team_with(entry("Late Guy", "WR", late_team, injury="OUT"))
+    found = find_problems(team, schedule, week, EARLY, lock=WEEKLY)[0]
+    assert found.kickoff == schedule.kickoff(late_team, week)
+    assert found.locks_at < found.kickoff
+
+
+def test_weekly_lock_collapses_every_deadline_to_one_moment(schedule, week, late_team):
+    first = schedule.lock_windows(week)[0]
+    early_team = next(t for t in schedule.teams if schedule.kickoff(t, week) == first)
+    team = team_with(
+        entry("Late Guy", "WR", late_team, injury="OUT"),
+        entry("Early Guy", "RB", early_team, injury="OUT"),
+    )
+    deadlines = {f.deadline for f in find_problems(team, schedule, week, EARLY, lock=WEEKLY)}
+    assert deadlines == {first}
+
+
+def test_per_player_locking_leaves_those_two_deadlines_different(
+    schedule, week, late_team
+):
+    first = schedule.lock_windows(week)[0]
+    early_team = next(t for t in schedule.teams if schedule.kickoff(t, week) == first)
+    team = team_with(
+        entry("Late Guy", "WR", late_team, injury="OUT"),
+        entry("Early Guy", "RB", early_team, injury="OUT"),
+    )
+    found = find_problems(team, schedule, week, EARLY, lock=PER_PLAYER)
+    assert len({f.deadline for f in found}) == 2
+
+
+def test_an_empty_slot_locks_too_under_a_weekly_lock(schedule, week):
+    """Per-player locking leaves an empty slot fixable all week; weekly does not."""
+    team = team_with(entry("Bench Guy", "RB", "KC", slot="BN"))
+    args = (team, schedule, week, EARLY)
+    weekly = find_problems(*args, required_slots={"RB": 1}, lock=WEEKLY)[0]
+    per_player = find_problems(*args, required_slots={"RB": 1}, lock=PER_PLAYER)[0]
+    assert weekly.locks_at == schedule.lock_windows(week)[0]
+    assert per_player.locks_at is None
+
+
+def test_omitting_the_lock_behaves_exactly_like_espns_default(schedule, week, late_team):
+    team = team_with(entry("Late Guy", "WR", late_team, injury="OUT"))
+    assert find_problems(team, schedule, week, EARLY) == find_problems(
+        team, schedule, week, EARLY, lock=PER_PLAYER
+    )

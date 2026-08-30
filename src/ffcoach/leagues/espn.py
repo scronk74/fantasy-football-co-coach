@@ -13,7 +13,15 @@ from __future__ import annotations
 
 import json
 
-from ffcoach.leagues.base import League, RosterEntry, Team, WaiverSettings
+from ffcoach.leagues.base import (
+    PER_PLAYER_LOCKTIME,
+    League,
+    LineupLock,
+    LockMode,
+    RosterEntry,
+    Team,
+    WaiverSettings,
+)
 from ffcoach.leagues.espn_client import EspnUnavailable
 
 # ESPN's defaultPositionId per player.
@@ -138,7 +146,27 @@ def parse_league(raw: str, my_swid: str | None = None) -> League:
         roster_slots=_parse_roster_slots(payload),
         current_week=_parse_current_week(payload),
         waivers=_parse_waivers(payload),
+        lineup_lock=_parse_lineup_lock(payload),
     )
+
+
+def _parse_lineup_lock(payload: dict) -> LineupLock:
+    """`rosterSettings.lineupLocktimeType` -> a lock mode plus its provenance.
+
+    Only the per-player spelling is matched, because it is the only one seen
+    live. A present-but-unfamiliar value is read as weekly rather than shrugged
+    off: ESPN offers exactly two lock rules, so a non-default value is evidence
+    the league chose the other one. Absence is *not* such evidence -- it is no
+    evidence at all -- so it falls back to ESPN's default and says so. That
+    asymmetry is deliberate.
+    """
+    raw = payload.get("settings", {}).get("rosterSettings", {}).get("lineupLocktimeType")
+    if raw is None:
+        return LineupLock(mode=LockMode.PER_PLAYER, raw=None, assumed=True)
+    text = str(raw).strip().upper()
+    if text == PER_PLAYER_LOCKTIME:
+        return LineupLock(mode=LockMode.PER_PLAYER, raw=str(raw))
+    return LineupLock(mode=LockMode.WEEKLY, raw=str(raw), unrecognized=True)
 
 
 def _parse_waivers(payload: dict) -> WaiverSettings:

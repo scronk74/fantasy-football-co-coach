@@ -8,6 +8,7 @@ from knowing that -- a second platform later satisfies the same protocol.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Protocol, runtime_checkable
 
 BENCH_SLOTS = ("BN", "IR")
@@ -79,6 +80,63 @@ class WaiverSettings:
         return bool(self.process_days)
 
 
+class LockMode(Enum):
+    """When a starting slot stops being changeable."""
+
+    # Each player locks at his own kickoff. ESPN's default, and the only value
+    # verified against a live league.
+    PER_PLAYER = "per_player"
+    # The whole lineup locks at the week's first kickoff. Under this rule a
+    # Sunday alert about a Monday-night starter is pointless -- he locked on
+    # Thursday -- which is why the mode has to be read rather than assumed.
+    WEEKLY = "weekly"
+
+
+# The value ESPN returned on a live public league. Recognizing *this* string is
+# what makes the mode knowable: the per-player case is confirmed, so anything
+# else present is by elimination the weekly one. That inverts the dependency --
+# we never needed the weekly spelling, only the default's.
+PER_PLAYER_LOCKTIME = "INDIVIDUAL_GAME"
+
+
+@dataclass(frozen=True)
+class LineupLock:
+    """The lock mode plus how confidently we know it.
+
+    Provenance travels with the value for the same reason it does on
+    `WeekResolution`: this setting silently changes every deadline the product
+    emits, so a guess must be visible as a guess rather than presented as fact.
+    """
+
+    mode: LockMode = LockMode.PER_PLAYER
+    raw: str | None = None
+    # True when the league published nothing and PER_PLAYER was assumed.
+    assumed: bool = False
+    # True when the league published a value we do not recognize.
+    unrecognized: bool = False
+
+    @property
+    def is_weekly(self) -> bool:
+        return self.mode is LockMode.WEEKLY
+
+    @property
+    def note(self) -> str | None:
+        """What to log, or None when the setting was read and understood."""
+        if self.assumed:
+            return (
+                "league published no lineupLocktimeType; assuming each player "
+                "locks at his own kickoff (ESPN's default). If this league "
+                "locks all lineups at the week's first game, deadlines will "
+                "read later than they are."
+            )
+        if self.unrecognized:
+            return (
+                f"unrecognized lineupLocktimeType {self.raw!r}; treating it as "
+                "a weekly lock, which deadlines earlier and so fails safe."
+            )
+        return None
+
+
 @dataclass(frozen=True)
 class League:
     name: str
@@ -93,6 +151,7 @@ class League:
     # about the wrong week entirely.
     current_week: int | None = None
     waivers: WaiverSettings = WaiverSettings()
+    lineup_lock: LineupLock = LineupLock()
 
     @property
     def starting_slots(self) -> dict[str, int]:

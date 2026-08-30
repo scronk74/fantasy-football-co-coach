@@ -70,27 +70,34 @@ def next_waiver_deadline(
 
 
 def fix_deadline(
-    starter_kickoff: dt.datetime | None,
-    replacement_kickoffs: tuple[dt.datetime, ...],
+    slot_locks_at: dt.datetime | None,
+    replacement_locks: tuple[dt.datetime, ...],
     waiver_deadline: dt.datetime | None,
 ) -> tuple[dt.datetime | None, bool]:
     """`(deadline, needs_waiver)` for one problem.
 
     With at least one bench replacement, the deadline is the earliest moment
-    your options start disappearing -- the first of the broken starter's own
-    kickoff (after which the slot locks) and the replacements' kickoffs (after
-    which that replacement is no longer startable).
+    your options start disappearing -- the first of the broken slot's own lock
+    and the replacements' locks, after which that replacement is no longer
+    startable.
 
-    With no replacement, a claim is required and the waiver schedule governs.
+    With no replacement, a claim is required and the waiver schedule governs --
+    **but never past the lock.** A claim that processes Friday cannot be started
+    in a lineup that froze Thursday, so the lock is a hard ceiling on every
+    deadline. Without that clamp a locked slot advertises a future deadline and
+    reads as "you still have time" precisely when you have none.
+
+    The arguments are lock times, not kickoffs: under a weekly lineup lock a
+    player freezes at the week's first game rather than his own (C5).
     """
-    if replacement_kickoffs or starter_kickoff is not None:
-        if not replacement_kickoffs and starter_kickoff is not None:
+    if replacement_locks or slot_locks_at is not None:
+        if not replacement_locks and slot_locks_at is not None:
             # Nobody to swap in, but the slot itself still locks. A claim is
-            # needed; the waiver deadline governs if we know it.
+            # needed; the waiver deadline governs if it lands before the lock.
             if waiver_deadline is not None:
-                return waiver_deadline, True
-            return starter_kickoff, True
-        candidates = [k for k in (starter_kickoff, *replacement_kickoffs) if k is not None]
+                return min(waiver_deadline, slot_locks_at), True
+            return slot_locks_at, True
+        candidates = [k for k in (slot_locks_at, *replacement_locks) if k is not None]
         if candidates:
             return min(candidates), False
 

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from ffcoach.leagues.base import LockMode
 from ffcoach.leagues.espn_client import EspnUnavailable
 from ffcoach.leagues.espn import parse_league
 
@@ -150,6 +151,45 @@ def test_waivers_are_unknown_rather_than_assumed_when_absent():
     w = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}').waivers
     assert w.is_known is False
     assert w.process_days == ()
+
+
+def test_parse_reads_the_per_player_lock_verified_live(raw):
+    """`INDIVIDUAL_GAME` is the one value confirmed against a real league."""
+    lock = parse_league(raw).lineup_lock
+    assert lock.mode is LockMode.PER_PLAYER
+    assert lock.is_weekly is False
+    assert lock.assumed is False
+    assert lock.note is None  # read and understood: nothing to log
+
+
+def test_absent_lock_setting_defaults_to_per_player_and_says_so():
+    lock = parse_league('{"seasonId": 2026, "settings": {}, "teams": []}').lineup_lock
+    assert lock.mode is LockMode.PER_PLAYER
+    assert lock.assumed is True
+    assert "assuming" in lock.note
+
+
+def test_an_unfamiliar_lock_value_is_read_as_weekly():
+    """ESPN offers two lock rules. Not the default one means the other.
+
+    This is what makes the setting knowable without ever having seen a
+    weekly-lock league: only the default's spelling had to be verified.
+    """
+    raw = (
+        '{"seasonId": 2026, "teams": [], "settings": {"rosterSettings":'
+        ' {"lineupLocktimeType": "FIRST_GAME_OF_WEEK"}}}'
+    )
+    lock = parse_league(raw).lineup_lock
+    assert lock.is_weekly is True
+    assert lock.unrecognized is True
+    assert lock.raw == "FIRST_GAME_OF_WEEK"
+    assert "fails safe" in lock.note
+
+
+def test_unfamiliar_lock_value_fails_toward_the_earlier_deadline():
+    """Guessing weekly alerts too early; guessing per-player alerts too late."""
+    raw = '{"seasonId": 2026, "teams": [], "settings": {"rosterSettings": {"lineupLocktimeType": "SOMETHING_NEW"}}}'
+    assert parse_league(raw).lineup_lock.mode is LockMode.WEEKLY
 
 
 def test_parse_rejects_malformed_json():

@@ -129,6 +129,10 @@ def _run_league(args, cache: Cache) -> int:
     print(f"Wrote {len(league.teams)} teams to {args.out} — {week.note}")
     if week.is_derived:
         print(f"note: {week.note}", file=sys.stderr)
+    # The lineup-lock rule silently rescales every deadline this tool emits, so
+    # an assumed or unrecognized value is said out loud rather than absorbed.
+    if league.lineup_lock.note:
+        print(f"note: {league.lineup_lock.note}", file=sys.stderr)
     return 0
 
 

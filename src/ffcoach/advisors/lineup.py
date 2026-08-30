@@ -19,9 +19,12 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from ffcoach.leagues.base import BENCH_SLOTS, RosterEntry, Team
+from ffcoach.leagues.base import BENCH_SLOTS, LineupLock, RosterEntry, Team
 from ffcoach.model.deadlines import fix_deadline
 from ffcoach.sources.schedule import Schedule
+
+# Used when a caller does not supply one: ESPN's default, per-player locking.
+_DEFAULT_LOCK = LineupLock()
 
 # Which bench positions may fill a starting slot.
 _SLOT_ELIGIBILITY: dict[str, tuple[str, ...]] = {
@@ -55,6 +58,12 @@ class LineupFinding:
     # model/deadlines.py. None means a claim is needed but the league never
     # published its waiver schedule.
     deadline: dt.datetime | None = None
+    # When the slot itself stops being changeable. Equal to `kickoff` under
+    # per-player locking; the week's *first* kickoff under a weekly lock, where
+    # a Monday-night starter freezes on Thursday. Kept separate from `kickoff`
+    # because under a weekly lock they are genuinely different facts: one is
+    # when he plays, the other is when you lose the ability to bench him.
+    locks_at: dt.datetime | None = None
     # True when no bench player can fill the slot, so the fix requires adding
     # someone rather than swapping.
     needs_waiver: bool = False
@@ -66,6 +75,21 @@ class LineupFinding:
 
 def _eligible(slot: str, position: str) -> bool:
     return position in _SLOT_ELIGIBILITY.get(slot, (slot,))
+
+
+def lock_time(
+    schedule: Schedule, team: str, week: int, lock: LineupLock
+) -> dt.datetime | None:
+    """When a player in `team` stops being movable, honoring the league's rule.
+
+    Under a weekly lock every slot freezes together at the week's first kickoff,
+    so all deadlines collapse to that one moment (C5.3). Under the per-player
+    default each player carries his own.
+    """
+    if lock.is_weekly:
+        windows = schedule.lock_windows(week)
+        return windows[0] if windows else None
+    return schedule.kickoff(team, week)
 
 
 def _reason(
@@ -121,6 +145,8 @@ def find_empty_slots(
     schedule: Schedule,
     week: int,
     waiver_deadline: dt.datetime | None = None,
+    lock: LineupLock | None = None,
+    now: dt.datetime | None = None,
 ) -> list[LineupFinding]:
     """Starting slots the league requires that hold no player.
 
@@ -131,6 +157,7 @@ def find_empty_slots(
 
     Bench and IR slots are excluded: an empty bench costs nothing.
     """
+    lock = lock or _DEFAULT_LOCK
     filled: dict[str, int] = {}
     for entry in team.roster:
         if entry.is_starter:
@@ -142,9 +169,13 @@ def find_empty_slots(
             continue
         missing = required - filled.get(slot, 0)
         replacements = find_replacements(team, slot, schedule, week)
+        # An empty slot has no player, so under per-player locking there is no
+        # kickoff to freeze it -- it stays fixable all week. A weekly lock is
+        # the exception: the empty slot freezes with everything else.
+        locks_at = _weekly_lock(schedule, week, lock)
         deadline, needs_waiver = fix_deadline(
-            None,
-            _replacement_kickoffs(team, replacements, schedule, week),
+            locks_at,
+            _replacement_kickoffs(team, replacements, schedule, week, lock),
             waiver_deadline,
         )
         for _ in range(max(0, missing)):
@@ -157,15 +188,28 @@ def find_empty_slots(
                     nfl_team="",
                     reason=_reason("empty_slot", None, slot, replacements),
                     replacements=replacements,
-                    # No player means no kickoff, so the slot never locks on
-                    # its own -- it stays fixable all week.
                     kickoff=None,
-                    locked=False,
+                    locked=_is_locked(locks_at, now),
                     deadline=deadline,
+                    locks_at=locks_at,
                     needs_waiver=needs_waiver,
                 )
             )
     return findings
+
+
+def _weekly_lock(
+    schedule: Schedule, week: int, lock: LineupLock
+) -> dt.datetime | None:
+    """The week's shared freeze moment, or None when slots lock individually."""
+    if not lock.is_weekly:
+        return None
+    windows = schedule.lock_windows(week)
+    return windows[0] if windows else None
+
+
+def _is_locked(locks_at: dt.datetime | None, now: dt.datetime | None) -> bool:
+    return locks_at is not None and now is not None and locks_at <= now
 
 
 def find_upcoming_byes(
@@ -219,6 +263,7 @@ def find_problems(
     required_slots: dict[str, int] | None = None,
     waiver_deadline: dt.datetime | None = None,
     look_ahead: bool = False,
+    lock: LineupLock | None = None,
 ) -> list[LineupFinding]:
     """Starters who cannot score this week, most urgent first.
 
@@ -233,11 +278,14 @@ def find_problems(
     `locked`, so callers can report them without alerting. Silently dropping
     them would make a missed player indistinguishable from a clean lineup.
     """
+    lock = lock or _DEFAULT_LOCK
     findings: list[LineupFinding] = []
 
     if required_slots:
         findings.extend(
-            find_empty_slots(team, required_slots, schedule, week, waiver_deadline)
+            find_empty_slots(
+                team, required_slots, schedule, week, waiver_deadline, lock, now
+            )
         )
 
     for entry in team.roster:
@@ -253,10 +301,11 @@ def find_problems(
             continue
 
         kickoff = schedule.kickoff(entry.nfl_team, week)
+        locks_at = lock_time(schedule, entry.nfl_team, week, lock)
         replacements = find_replacements(team, entry.lineup_slot, schedule, week)
         deadline, needs_waiver = fix_deadline(
-            kickoff,
-            _replacement_kickoffs(team, replacements, schedule, week),
+            locks_at,
+            _replacement_kickoffs(team, replacements, schedule, week, lock),
             waiver_deadline,
         )
 
@@ -270,8 +319,9 @@ def find_problems(
                 reason=_reason(kind, entry, entry.lineup_slot, replacements),
                 replacements=replacements,
                 kickoff=kickoff,
-                locked=kickoff is not None and kickoff <= now,
+                locked=_is_locked(locks_at, now),
                 deadline=deadline,
+                locks_at=locks_at,
                 needs_waiver=needs_waiver,
             )
         )
@@ -284,15 +334,24 @@ def find_problems(
 
 
 def _replacement_kickoffs(
-    team: Team, names: tuple[str, ...], schedule: Schedule, week: int
+    team: Team,
+    names: tuple[str, ...],
+    schedule: Schedule,
+    week: int,
+    lock: LineupLock,
 ) -> tuple[dt.datetime, ...]:
+    """When each replacement stops being startable.
+
+    Under a weekly lock these all collapse to the same moment, which is exactly
+    what makes `fix_deadline`'s `min()` produce one shared deadline.
+    """
     by_name = {e.player_name: e for e in team.roster}
     kicks = []
     for name in names:
         entry = by_name.get(name)
         if entry is None:
             continue
-        kick = schedule.kickoff(entry.nfl_team, week)
+        kick = lock_time(schedule, entry.nfl_team, week, lock)
         if kick is not None:
             kicks.append(kick)
     return tuple(kicks)
