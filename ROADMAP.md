@@ -21,10 +21,10 @@ split_threshold: 8
 
 | | |
 |---|---|
-| **Date** | 2026-08-30 |
-| **Branch** | `in-season-alerting-spec` · PR: — (4 merged) |
-| **Tests** | 295 Python + 38 JS, all green · CI gates both on every PR |
-| **Phase** | **Stage C complete (5/5).** Detection is done; next is Stage D — notifications |
+| **Date** | 2026-08-31 |
+| **Branch** | `review-fixes-truth-and-viability` · PR: — (7 merged) |
+| **Tests** | 356 Python + 53 JS, all green · CI gates both on every PR |
+| **Phase** | **Stage C complete (6/6)**, with C6 added by the 2026-08-31 review. Next is C7 (`CheckResult`), then Stage D |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-1](#7-roadblocks) — no league invite yet (no league ID, no cookies) |
 
@@ -172,7 +172,9 @@ flowchart LR
 | C3 | Current week from ESPN `scoringPeriodId` | Done | 🟢 V1 | — | B1 | M | D-013 | ✅ 2026-08-29 |
 | C4 | Action-deadline alerting + bye look-ahead | Done | 🟢 V1 | — | C3 | M | D-014 | ✅ 2026-08-29 |
 | C5 | Read lineup-lock league setting | Done | 🟢 V1 | — | B1 | M | D-015 | ✅ 2026-08-29 |
-| D1 | `Notifier` interface + **ntfy first** | Backlog | 🟢 V1 | Week 1 | C2 | M | D-016, D-042 | ✅ 2026-08-29 |
+| C6 | **Truth repairs from the 2026-08-31 review** | Done | 🟢 V1 | — | C5 | M | D-044…D-048 | ✅ 2026-08-31 |
+| C7 | **`CheckResult` + `ffcoach check --dry-run`** | Next | 🟢 V1 | Week 1 | C6 | M | D-049 | 🤖 |
+| D1 | `Notifier` interface + **ntfy first** | Backlog | 🟢 V1 | Week 1 | C7 | M | D-016, D-042 | ✅ 2026-08-29 |
 | D2 | Message rendering (160-char SMS budget) | Backlog | 🟢 V1 | Week 1 | D1 | L | D-017 | ✅ 2026-08-29 |
 | D3 | Quiet hours + two-strike repeat policy | Backlog | 🟢 V1 | Week 1 | D1 | M | D-018, D-019 | ✅ 2026-08-29 |
 | D4 | Per-alert enable / tier / threshold config | Backlog | 🟢 V1 | Week 1 | D1 | L | D-020 | ✅ 2026-08-29 |
@@ -200,8 +202,14 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 5/5 (100%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 13/40 steps done (33%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 6/7 (86%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 14/42 steps done (33%).
+
+> **On that percentage.** The 2026-08-31 review's sharpest line is that it overstates user
+> value, because until C7 lands the finished lineup detection has no production caller —
+> `find_problems()` appears exactly once in `src/`, at its own definition. Steps completed
+> is a measure of code written, not of anything the user can run. Left as-is rather than
+> re-weighted, with the caveat stated here instead.
 
 ## 4. Done ledger
 
@@ -278,6 +286,12 @@ flowchart LR
 - **D-041 — Logging is structured JSONL plus SQLite history.** ✅ *(2026-08-29)*. Every run appends a JSON line (checked / found / sent / failed); alert and decision history go in the existing SQLite cache. Greppable at 9am on a Sunday, queryable by the UI history view, and one storage decision covers both E1 and G3.
 - **D-042 — ntfy is the first channel built.** ✅ *(2026-08-29)*. Closes Q-1. No credentials, no carrier dependency, no length ceiling — the fastest path to a working alert. Email and SMS gateway remain behind the same interface for later; the bake-off (D5) drops to V1-nice.
 - **D-043 — Ship two projection sources, add a third later.** ✅ *(2026-08-29)*. Closes Q-5. ESPN and Sleeper are both confirmed free and unauthenticated, and a two-source average already beats either alone. Unblocks G1/G2 now instead of waiting on nflverse-derived modeling work.
+- **D-044 — Sources return `SourceResult`, and parse before they cache.** ✅ *(2026-08-31)*. From the review. Bare text made a live fetch and a week-old cache indistinguishable, and caching a raw 200 before validating it let an ESPN login page evict the last usable roster. Freshness now travels with the value (the `WeekResolution` / `LineupLock` idiom applied a third time), and `freshest()` reports a page's age as its *oldest* input. **Amends the source template in CLAUDE.md.**
+- **D-045 — Replacements are allocated across the roster, not chosen per slot.** ✅ *(2026-08-31)*. From the review, confirming a suspicion already recorded in `CODEX_README.md`. `advisors/roster_plan.py` serves the most-constrained opening first so a dedicated RB slot is not stripped by FLEX. IR is a prerequisite action, not a bench swap — ESPN will not start a player out of an IR slot.
+- **D-046 — Deadlines carry a fix *kind*, not just a time. Partially overturns D-014's implementation.** ✅ *(2026-08-31)*. The review is right and the C5 clamp was wrong. `min(waiver, lock)` stopped the number from printing after the lock but kept saying "claim someone", producing a plausible time attached to an impossible action. `FixPlan` names the action (`BENCH_SWAP` / `WAIVER_CLAIM` / `ADD_BEFORE_LOCK` / `UNKNOWN`) with a one-word verb. **D-014's principle stands** — the deadline belongs to the available fix — only the clamp is replaced. Deliberately no `FREE_AGENT_ADD`: nothing fetches the free-agent pool, and an unemittable kind is a lie.
+- **D-047 — An unusable value becomes `UNKNOWN` plus a diagnostic; a plausible default is never substituted.** ✅ *(2026-08-31)*. From the review. Unknown ESPN slot ids defaulted to `BN` (hiding a real starter from every check) and unknown pro teams to `FA` (matching no schedule row, so he looked safe). Both produced a clean run and an unguarded lineup. Diagnostics travel on `League.diagnostics` into the payload and onto the page, because a warning only on stderr of an unattended run is not a warning.
+- **D-048 — Missing schedule data is `unknown`, never `bye`.** ✅ *(2026-08-31)*. From the review, then widened. A row with a blank kickoff time was dropped, after which "no row" meant bye — a TBD game became the most certain fact the product emits. `Schedule.status()` is now tri-state, **and** a bye additionally requires being the team's *single* missing week, so a truncated download cannot manufacture a run of byes. That second half is not in the review; the same defect generalizes past the case it found.
+- **D-049 — Compose detection into a `CheckResult` before building delivery (C7).** ✅ *(2026-08-31)*. From the review, accepted in narrow form. `find_problems()` has no production caller, so there is currently nothing for a notifier to send and no place orchestration lives except inside a delivery module. C7 adds that object and `ffcoach check --dry-run`. **Not accepted:** the review's broader reordering of D/E/F around it — see the reply document for why the evidence does not carry that far.
 
 ### Open — need a decision
 
@@ -290,12 +304,13 @@ flowchart LR
 
 - **R-1 — No league invite yet.** *Gates:* verifying the ESPN parser against real data; `espn.yaml`; real league settings; anything running against a live league. **No longer gates C5** — C5 was unblocked by recognizing only the *default* lock value and treating any other as the alternative, so the unverified spelling was never needed. *What must change:* the user is invited and supplies league ID + `espn_s2`/`SWID` cookies. *Why it matters:* `leagues/espn.py` was built against a **hand-written fixture** derived from community docs — tests passing proves internal consistency, **not** that it matches ESPN. Expect field-name corrections. *Who decides:* league commissioner, then user. *Linked:* B1, Q-2.
 - **R-2 — `launchd` correctness is untestable in CI.** *Gates:* confidence in E2/E3. *What must change:* a real install-and-wait-a-day check on the actual iMac. *Why:* the failure mode is silence, which looks identical to success. *Who decides:* user (manual verification). *Linked:* E2, E3.
+- **R-3 — The scheduler and the dead-man's switch share one sleeping iMac.** *(Raised by the 2026-08-31 review.)* *Gates:* whether "never miss a move" is literally true or best-effort. *Why:* a process on that machine cannot warn you while the machine is asleep. Running a missed job on wake only helps if wake precedes the deadline. *What must change:* either an off-host heartbeat, or the promise is restated as best-effort in the product's own copy. *Who decides:* user. *Linked:* E2, E3, D-023.
 
 ## 8. Validation & test-coverage status
 
 | Layer | State |
 |---|---|
-| Unit/integration | 214 Python + 38 JS, all green; offline via committed fixtures |
+| Unit/integration | 356 Python + 53 JS, all green; offline via committed fixtures |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ❌ (fixture only — R-1)** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |
