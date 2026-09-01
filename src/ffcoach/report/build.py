@@ -22,13 +22,17 @@ def board_payload(
     config: LeagueConfig,
     generated_at: str,
     unmatched: list[str],
-    stale_seconds: float | None,
+    age_seconds: float | None = None,
+    stale: bool = False,
 ) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
-        "stale": stale_seconds is not None,
-        "stale_seconds": stale_seconds,
+        # `generated_at` is when this file was written; `age_seconds` is how
+        # old the *data* in it is. Conflating the two is how week-old rosters
+        # were published with a current timestamp and `stale: false`.
+        "stale": stale,
+        "age_seconds": age_seconds,
         "unmatched": list(unmatched),
         "league": {
             "name": config.name,
@@ -46,19 +50,27 @@ def board_payload(
 def league_payload(
     league: League,
     generated_at: str,
-    stale_seconds: float | None,
+    age_seconds: float | None = None,
+    stale: bool = False,
     week: int | None = None,
     week_source: str | None = None,
 ) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
-        "stale": stale_seconds is not None,
-        "stale_seconds": stale_seconds,
+        # `generated_at` is when this file was written; `age_seconds` is how
+        # old the *data* in it is. Conflating the two is how week-old rosters
+        # were published with a current timestamp and `stale: false`.
+        "stale": stale,
+        "age_seconds": age_seconds,
         "week": week,
         # "espn" or "derived". The page shows this so a fallback week is never
         # presented as authoritative.
         "week_source": week_source,
+        # Things the ESPN adapter could not interpret. Surfaced in the payload
+        # so a renamed slot id shows up on the page rather than only on stderr
+        # of a run nobody watched.
+        "diagnostics": list(league.diagnostics),
         "league": {
             "name": league.name,
             "season": league.season,
@@ -83,6 +95,11 @@ def league_payload(
                         "nfl_team": e.nfl_team,
                         "lineup_slot": e.lineup_slot,
                         "is_starter": e.is_starter,
+                        # ESPN gives us this and the page used to throw it
+                        # away, so a QUESTIONABLE starter looked identical to
+                        # a healthy one on a page whose whole job is telling
+                        # you where your team stands.
+                        "injury_status": e.injury_status,
                     }
                     for e in t.roster
                 ],

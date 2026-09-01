@@ -54,6 +54,22 @@ class Cache:
             return None
         return value
 
+    def get_with_age(self, key: str) -> tuple[str, float] | None:
+        """A live-enough entry and how old it is, or None past its TTL.
+
+        `get` answers "may I use this"; this answers "may I use this, and how
+        old is it". Sources need the second question because a cache hit is
+        still not a live fetch, and the page says so.
+        """
+        row = self._row(key)
+        if row is None:
+            return None
+        value, stored_at, ttl = row
+        age = self._now() - stored_at
+        if age > ttl:
+            return None
+        return value, age
+
     def get_stale(self, key: str) -> tuple[str, float] | None:
         row = self._row(key)
         if row is None:

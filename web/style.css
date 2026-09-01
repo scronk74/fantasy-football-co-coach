@@ -91,3 +91,41 @@ td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: to
 .team-card .owner, .team-card .points { color: var(--muted); font-size: 13px; margin: 2px 0; }
 .team-card table { margin-top: 10px; }
 .roster-row.bench { opacity: .55; }
+
+/* Injury status. Letters plus a title attribute carry the meaning; colour only
+   reinforces it, so the column still works in greyscale and for a screen
+   reader. Dark text on the light chip keeps contrast usable in both themes,
+   which the position badges do not yet manage. */
+.injury {
+  display: inline-block; min-width: 24px; text-align: center;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; letter-spacing: .02em;
+}
+.injury.out { background: #fecaca; color: #7f1d1d; }
+.injury.doubt { background: #fde68a; color: #78350f; }
+@media (prefers-color-scheme: dark) {
+  .injury.out { background: #7f1d1d; color: #fee2e2; }
+  .injury.doubt { background: #78350f; color: #fef3c7; }
+}
+
+/* Serving old data is not a neutral state; the status line stops being grey. */
+.status.stale { color: var(--bad); font-weight: 600; }
+
+/* Things the ESPN adapter could not interpret. Loud on purpose: an
+   unrecognized slot id means a starter may be going unchecked. */
+.warn {
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--bad); border-radius: 0 6px 6px 0;
+  padding: 10px 14px; margin: 0 0 14px; font-size: 13px;
+}
+
+/* The draft table is wider than a phone. Until the Week page settles the
+   responsive pattern, at least make the overflow scrollable and visible
+   rather than clipping the availability column off-screen with no cue. */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+@media (max-width: 640px) {
+  header, main, .sitenav { padding: 0 12px; }
+  /* 44px is the smallest reliably tappable target. The old controls were
+     roughly 26x19. */
+  .chip, button#reset, .board button { min-height: 44px; padding: 8px 14px; }
+}

@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  ageText,
   applyFilters,
   bestAvailable,
+  freshnessText,
   boardHtml,
   formatValue,
   playerId,
@@ -150,4 +152,50 @@ test("boardHtml renders one row per player plus breaks", () => {
 
 test("boardHtml handles an empty roster", () => {
   assert.match(boardHtml([], {}), /no players/i);
+});
+
+// --- freshness: how old the data is, separate from when the file was written ---
+
+test("ageText rounds rather than claiming false precision", () => {
+  assert.equal(ageText(45), "45s");
+  assert.equal(ageText(600), "10m");
+  assert.equal(ageText(3600 * 3), "3h");
+  assert.equal(ageText(86400 * 4), "4d");
+});
+
+test("ageText says nothing when there is nothing to say", () => {
+  assert.equal(ageText(null), "");
+  assert.equal(ageText(undefined), "");
+  assert.equal(ageText(-5), "");
+  assert.equal(ageText("nope"), "");
+});
+
+test("fresh data reports its age without calling itself stale", () => {
+  const text = freshnessText({ age_seconds: 120, stale: false }, "ffcoach build");
+  assert.match(text, /2m old/);
+  assert.doesNotMatch(text, /stale/);
+});
+
+test("stale data says how old it is and what to run", () => {
+  // The failure this replaced: a week-old cached payload rendered exactly like
+  // a live one, because `stale` was derived from whether an age was present.
+  const text = freshnessText({ age_seconds: 86400 * 7, stale: true }, "ffcoach league");
+  assert.match(text, /stale/);
+  assert.match(text, /7d ago/);
+  assert.match(text, /ffcoach league/);
+});
+
+test("a live fetch claims no age at all", () => {
+  assert.equal(freshnessText({ age_seconds: 0, stale: false }, "x"), "");
+});
+
+test("stale with no known age still names the remedy", () => {
+  const text = freshnessText({ age_seconds: null, stale: true }, "ffcoach build");
+  assert.match(text, /stale/);
+  assert.match(text, /ffcoach build/);
+});
+
+test("a payload missing the freshness fields does not throw", () => {
+  assert.equal(freshnessText(undefined, "x"), "");
+  assert.equal(freshnessText({}, "x"), "");
 });

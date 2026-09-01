@@ -155,8 +155,8 @@ def test_fetch_hits_network_once_then_serves_cache(tmp_path, raw):
     cache = Cache(tmp_path / "c.sqlite3")
     calls = []
     client = client_returning(raw, calls=calls)
-    a = fetch_schedule(2025, cache, client=client)
-    b = fetch_schedule(2025, cache, client=client)
+    a = fetch_schedule(2025, cache, client=client).text
+    b = fetch_schedule(2025, cache, client=client).text
     assert a == b == raw
     assert len(calls) == 1
 
@@ -165,7 +165,7 @@ def test_fetch_falls_back_to_stale_cache_on_failure(tmp_path, raw):
     cache = Cache(tmp_path / "c.sqlite3")
     fetch_schedule(2025, cache, client=client_returning(raw))
     cache.set(_cache_key(2025), raw, ttl_seconds=-1)
-    got = fetch_schedule(2025, cache, client=client_returning("", status=500))
+    got = fetch_schedule(2025, cache, client=client_returning("", status=500)).text
     assert got == raw
 
 
@@ -187,3 +187,93 @@ def test_known_kickoff_matches_the_source_row(schedule):
     kick = schedule.kickoff("PHI", 1)
     assert kick.date() == dt.date(2025, 9, 4)
     assert (kick.hour, kick.minute) == (20, 20)
+
+
+# --- a missing kickoff time is not a bye ---
+#
+# Rows without a `gametime` were dropped at parse, after which "this team has
+# no row this week" meant bye. A Week 2 game whose time was still TBD made both
+# teams read as on bye -- a data-quality gap reported as the most certain fact
+# this product emits, at interrupt priority.
+
+HEADER = "game_id,season,game_type,week,gameday,gametime,away_team,home_team\n"
+
+
+def three_weeks(week_two_time: str) -> str:
+    """KC/DEN play all three weeks; week 2's kickoff time is the variable.
+
+    BUF/NYJ play weeks 1 and 3 only, so week 2 is their single bye and the
+    season has three known weeks even when KC's week-2 row is degraded.
+    """
+    rows = [
+        f"g{w},2025,REG,{w},2025-09-0{w},{t},DEN,KC\n"
+        for w, t in ((1, "13:00"), (2, week_two_time), (3, "16:25"))
+    ]
+    rows += [f"b{w},2025,REG,{w},2025-09-0{w},13:00,NYJ,BUF\n" for w in (1, 3)]
+    return HEADER + "".join(rows)
+
+
+def test_a_game_with_no_listed_time_is_still_a_game():
+    sched = parse_schedule(three_weeks(""), 2025)
+    assert sched.status("KC", 2) == "playing"
+    assert sched.is_on_bye("KC", 2) is False
+
+
+def test_a_game_with_no_listed_time_reports_its_kickoff_as_unknown():
+    sched = parse_schedule(three_weeks(""), 2025)
+    assert sched.kickoff_known("KC", 2) is False
+    assert sched.kickoff("KC", 2) is None
+
+
+def test_a_week_with_no_row_at_all_is_still_a_bye():
+    """The narrowing must not cost us the finding the product is built on."""
+    sched = parse_schedule(three_weeks("13:00"), 2025)
+    assert sched.status("BUF", 2) == "bye"
+    assert sched.bye_week("BUF") == 2
+
+
+def test_a_team_the_schedule_never_mentions_is_unknown_not_on_bye():
+    """An ESPN abbreviation we failed to normalize must not become a bye."""
+    sched = parse_schedule(three_weeks("13:00"), 2025)
+    assert sched.status("SEA", 2) == "unknown"
+    assert sched.is_on_bye("SEA", 2) is False
+
+
+def test_an_unpublished_kickoff_contributes_no_lock_window():
+    """A blank cell must not become a deadline."""
+    sched = parse_schedule(three_weeks(""), 2025)
+    assert sched.lock_windows(2) == []
+
+
+def test_a_row_missing_a_team_is_dropped_not_kept_as_half_a_game():
+    raw = HEADER + "g1,2025,REG,1,2025-09-01,13:00,,KC\ng2,2025,REG,2,2025-09-02,13:00,DEN,KC\n"
+    sched = parse_schedule(raw, 2025)
+    assert ("KC", 1) not in sched._by_team_week
+    assert sched.status("KC", 2) == "playing"
+
+
+def test_several_missing_weeks_read_as_unknown_rather_than_several_byes():
+    """A truncated feed is not a bye, and only one missing week can be one.
+
+    Without this, a download cut short after Week 3 turns every remaining week
+    into a bye -- interrupt-priority alerts manufactured out of a broken
+    transfer.
+    """
+    raw = HEADER + "".join(
+        f"g{w},2025,REG,{w},2025-09-0{w},13:00,DEN,KC\n" for w in (1, 2)
+    ) + "".join(f"b{w},2025,REG,{w},2025-09-0{w},13:00,NYJ,BUF\n" for w in (1, 2, 3, 4))
+    sched = parse_schedule(raw, 2025)
+    assert sched.status("KC", 3) == "unknown"
+    assert sched.status("KC", 4) == "unknown"
+    assert sched.bye_week("KC") is None
+
+
+def test_a_non_numeric_week_is_dropped_rather_than_crashing():
+    raw = HEADER + "g1,2025,REG,soon,2025-09-01,13:00,DEN,KC\ng2,2025,REG,2,2025-09-02,13:00,DEN,KC\n"
+    assert parse_schedule(raw, 2025).weeks == {2}
+
+
+def test_the_real_fixture_still_has_every_game_timed(schedule):
+    """If nflverse starts shipping blanks, this is where we find out."""
+    untimed = [g for g in schedule.games if g.kickoff is None]
+    assert untimed == []

@@ -13,6 +13,7 @@ from __future__ import annotations
 import httpx
 
 from ffcoach.cache import Cache
+from ffcoach.sources.base import SourceResult, stale_fallback
 
 ESPN_URL = (
     "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{season}"
@@ -45,11 +46,11 @@ def fetch_league(
     swid: str,
     cache: Cache,
     client: httpx.Client | None = None,
-) -> str:
+) -> SourceResult:
     key = _cache_key(league_id, season)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
+    hit = cache.get_with_age(key)
+    if hit is not None:
+        return SourceResult(text=hit[0], age_seconds=hit[1])
 
     owns_client = client is None
     client = client or httpx.Client(timeout=20.0)
@@ -62,26 +63,31 @@ def fetch_league(
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (401, 403):
+            # Deliberately no stale fallback: old rosters cannot repair dead
+            # cookies, and serving them would hide the one failure that needs
+            # a human.
             raise EspnAuthError(
                 f"ESPN rejected the session cookies ({exc.response.status_code}); "
                 "re-extract espn_s2/SWID from your browser and update espn.yaml"
             ) from exc
-        stale = cache.get_stale(key)
-        if stale is not None:
-            return stale[0]
-        raise EspnUnavailable(
-            f"could not fetch ESPN league and no cached copy exists: {exc}"
-        ) from exc
+        return stale_fallback(cache, key, exc, EspnUnavailable, "ESPN league")
     except httpx.HTTPError as exc:
-        stale = cache.get_stale(key)
-        if stale is not None:
-            return stale[0]
-        raise EspnUnavailable(
-            f"could not fetch ESPN league and no cached copy exists: {exc}"
-        ) from exc
+        return stale_fallback(cache, key, exc, EspnUnavailable, "ESPN league")
     finally:
         if owns_client:
             client.close()
 
+    # Imported here rather than at module scope because `leagues.espn` imports
+    # this module's exceptions; at call time the cycle is already resolved.
+    # The check itself is the point: ESPN answers an expired session with a
+    # 200-status HTML login page, and caching that would destroy the roster we
+    # would otherwise still be able to fall back on.
+    from ffcoach.leagues.espn import parse_league
+
+    try:
+        parse_league(response.text)
+    except EspnUnavailable as exc:
+        return stale_fallback(cache, key, exc, EspnUnavailable, "ESPN league")
+
     cache.set(key, response.text, ttl_seconds=TTL_SECONDS)
-    return response.text
+    return SourceResult(text=response.text)

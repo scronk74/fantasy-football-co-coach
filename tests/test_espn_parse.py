@@ -200,3 +200,122 @@ def test_parse_rejects_malformed_json():
 def test_parse_defaults_owner_to_unknown_when_owners_list_is_empty():
     league = parse_league('{"seasonId": 2026, "settings": {}, "teams": [{"id": 1, "owners": []}]}')
     assert league.teams[0].owner == "Unknown"
+
+
+# --- valid JSON of the wrong shape ---
+#
+# Only syntax errors used to become EspnUnavailable. Anything else escaped as a
+# bare AttributeError or ValueError -- a stack trace no caller could catch, so
+# no stale fallback could run and the CLI's friendly error never printed. Each
+# case below was confirmed reachable before the guards existed.
+
+import json
+
+
+@pytest.mark.parametrize(
+    "mutate, why",
+    [
+        (lambda p: [], "top-level list"),
+        (lambda p: {**p, "settings": []}, "settings as a list"),
+        (lambda p: {**p, "teams": {}}, "teams as an object"),
+        (lambda p: {**p, "members": "nope"}, "members as a string"),
+        (lambda p: {**p, "seasonId": "twenty-six"}, "non-numeric season"),
+    ],
+)
+def test_wrong_shapes_raise_the_modules_own_exception(raw, mutate, why):
+    payload = json.dumps(mutate(json.loads(raw)))
+    with pytest.raises(EspnUnavailable):
+        parse_league(payload)
+
+
+def test_a_non_numeric_record_raises_rather_than_escaping_as_valueerror(raw):
+    payload = json.loads(raw)
+    payload["teams"][0]["record"]["overall"]["wins"] = "oops"
+    with pytest.raises(EspnUnavailable):
+        parse_league(json.dumps(payload))
+
+
+def test_a_missing_settings_block_is_tolerated_not_fatal(raw):
+    """Absent is different from malformed: we lose settings, not the league."""
+    payload = json.loads(raw)
+    del payload["settings"]
+    league = parse_league(json.dumps(payload))
+    assert league.teams
+    assert league.roster_slots == {}
+
+
+# --- an unrecognized id must never become a plausible default ---
+
+
+def first_entry(payload):
+    return payload["teams"][0]["roster"]["entries"][0]
+
+
+def test_an_unknown_lineup_slot_is_not_silently_benched(raw):
+    """The dangerous default. A renamed slot id used to become "BN", so a real
+    starter was skipped by every check and the run looked clean."""
+    payload = json.loads(raw)
+    first_entry(payload)["lineupSlotId"] = 9999
+    league = parse_league(json.dumps(payload))
+    entry = league.teams[0].roster[0]
+    assert entry.lineup_slot == "UNKNOWN"
+    assert entry.is_starter is True, "an unknown slot must still be evaluated"
+
+
+def test_an_unknown_lineup_slot_produces_a_diagnostic(raw):
+    payload = json.loads(raw)
+    first_entry(payload)["lineupSlotId"] = 9999
+    notes = parse_league(json.dumps(payload)).diagnostics
+    assert any("lineupSlotId" in n and "9999" in n for n in notes)
+
+
+def test_an_unknown_pro_team_is_not_silently_a_free_agent(raw):
+    """"FA" matches no schedule row, so the player looked like someone with
+    nothing to worry about."""
+    payload = json.loads(raw)
+    first_entry(payload)["playerPoolEntry"]["player"]["proTeamId"] = 4242
+    league = parse_league(json.dumps(payload))
+    assert league.teams[0].roster[0].nfl_team == "UNKNOWN"
+    assert any("proTeamId" in n for n in league.diagnostics)
+
+
+def test_a_real_free_agent_is_still_read_as_FA(raw):
+    """proTeamId 0 genuinely means free agent; only unknown ids change."""
+    payload = json.loads(raw)
+    first_entry(payload)["playerPoolEntry"]["player"]["proTeamId"] = 0
+    assert parse_league(json.dumps(payload)).teams[0].roster[0].nfl_team == "FA"
+
+
+def test_a_clean_fixture_produces_no_diagnostics(raw):
+    assert parse_league(raw).diagnostics == ()
+
+
+# --- waiver settings we cannot use are discarded, not clamped ---
+
+
+def set_waiver_hour(payload, hour):
+    payload.setdefault("settings", {}).setdefault("acquisitionSettings", {})[
+        "waiverProcessHour"
+    ] = hour
+    return payload
+
+
+def test_an_out_of_range_waiver_hour_makes_the_schedule_unknown(raw):
+    """Hour 25 used to parse and then blow up building a datetime much later.
+
+    Clamping to 23 would be worse: a confident deadline derived from a value
+    known to be wrong.
+    """
+    league = parse_league(json.dumps(set_waiver_hour(json.loads(raw), 25)))
+    assert league.waivers.is_known is False
+    assert any("waiverProcessHour" in n for n in league.diagnostics)
+
+
+def test_a_non_numeric_waiver_hour_makes_the_schedule_unknown(raw):
+    league = parse_league(json.dumps(set_waiver_hour(json.loads(raw), "noon")))
+    assert league.waivers.is_known is False
+
+
+def test_a_valid_waiver_hour_still_reads_normally(raw):
+    league = parse_league(json.dumps(set_waiver_hour(json.loads(raw), 11)))
+    assert league.waivers.process_hour == 11

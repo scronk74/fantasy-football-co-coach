@@ -28,7 +28,7 @@ def rows():
 
 def payload():
     return board_payload(
-        rows(), cfg(), generated_at="2026-08-20T12:00:00Z", unmatched=["X"], stale_seconds=None
+        rows(), cfg(), generated_at="2026-08-20T12:00:00Z", unmatched=["X"]
     )
 
 
@@ -68,10 +68,10 @@ def test_payload_marks_fresh_data_as_not_stale():
 
 def test_payload_marks_stale_data_with_its_age():
     p = board_payload(
-        rows(), cfg(), generated_at="2026-08-20T12:00:00Z", unmatched=[], stale_seconds=7200.0
+        rows(), cfg(), generated_at="2026-08-20T12:00:00Z", unmatched=[], age_seconds=7200.0, stale=True
     )
     assert p["stale"] is True
-    assert p["stale_seconds"] == 7200.0
+    assert p["age_seconds"] == 7200.0
 
 
 def test_write_board_creates_parent_directories(tmp_path):
@@ -98,7 +98,7 @@ def sample_league():
 
 
 def league_json_payload():
-    return league_payload(sample_league(), generated_at="2026-08-20T12:00:00Z", stale_seconds=None)
+    return league_payload(sample_league(), generated_at="2026-08-20T12:00:00Z")
 
 
 def test_league_payload_declares_schema_version():
@@ -128,6 +128,7 @@ def test_league_payload_includes_roster_entries():
             "nfl_team": "ATL",
             "lineup_slot": "RB",
             "is_starter": True,
+            "injury_status": None,
         }
     ]
 
@@ -137,9 +138,9 @@ def test_league_payload_never_contains_a_dollar_figure():
 
 
 def test_league_payload_marks_stale_data_with_its_age():
-    p = league_payload(sample_league(), generated_at="2026-08-20T12:00:00Z", stale_seconds=900.0)
+    p = league_payload(sample_league(), generated_at="2026-08-20T12:00:00Z", age_seconds=900.0, stale=True)
     assert p["stale"] is True
-    assert p["stale_seconds"] == 900.0
+    assert p["age_seconds"] == 900.0
 
 
 def test_write_board_also_writes_a_league_payload(tmp_path):

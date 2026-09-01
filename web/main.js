@@ -1,5 +1,5 @@
 // DOM wiring only. Every computation lives in render.js, which is tested.
-import { applyFilters, bestAvailable, boardHtml, playerId } from "./render.js";
+import { applyFilters, bestAvailable, boardHtml, freshnessText, playerId } from "./render.js";
 import { navHtml } from "./nav.js";
 
 const DRAFTED_KEY = "ffcoach.drafted";
@@ -94,9 +94,11 @@ async function load() {
       payload.league.scoring,
       `you pick ${payload.league.my_pick}, then ${payload.league.next_pick}`,
     ];
-    if (payload.stale) bits.push("data is stale — run ffcoach refresh");
+    const freshness = freshnessText(payload, "ffcoach refresh");
+    if (freshness) bits.push(freshness);
     if (payload.unmatched?.length) bits.push(`${payload.unmatched.length} players unmatched`);
     $("status").textContent = bits.join(" · ");
+    $("status").classList.toggle("stale", Boolean(payload.stale));
 
     $("explain").checked = state.explain;
     buildChips();

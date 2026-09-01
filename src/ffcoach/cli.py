@@ -23,6 +23,7 @@ from ffcoach.report.build import board_payload, league_payload, write_board
 from ffcoach.sources.schedule import ScheduleUnavailable, fetch_schedule, parse_schedule
 from ffcoach.sources.crosswalk import CrosswalkUnavailable, fetch_crosswalk, parse_crosswalk
 from ffcoach.sources.ffcalc import AdpUnavailable, fetch_adp, parse_adp
+from ffcoach.sources.base import freshest
 from ffcoach.sources.match import enrich
 from ffcoach.sources.sleeper import (
     PlayersUnavailable,
@@ -62,37 +63,71 @@ def _parser() -> argparse.ArgumentParser:
                 default=dt.date.today().year,
                 help="NFL season, used to load the schedule for week resolution",
             )
+            p.add_argument(
+                "--my-swid",
+                default=None,
+                help=(
+                    "with --fixture, which owner id counts as you, so the demo "
+                    "exercises the pinned-team behavior the page promises"
+                ),
+            )
 
     return parser
 
 
 def _load_players(config, cache):
-    raw_adp = fetch_adp(config.scoring, config.teams, config.season, cache)
-    players = parse_adp(raw_adp)
+    """Enriched players, plus how old the oldest input to them was."""
+    adp = fetch_adp(config.scoring, config.teams, config.season, cache)
+    players = parse_adp(adp.text)
 
-    raw_meta = fetch_players(cache)
-    meta = parse_players(raw_meta)
-    meta_by_id = parse_players_by_id(raw_meta)
+    meta_raw = fetch_players(cache)
+    meta = parse_players(meta_raw.text)
+    meta_by_id = parse_players_by_id(meta_raw.text)
 
     # Identity is best-effort: if the crosswalk is unreachable the join
     # falls back to names, which is how this worked before it existed.
     crosswalk = None
+    crosswalk_raw = None
     try:
-        crosswalk = parse_crosswalk(fetch_crosswalk(cache))
+        crosswalk_raw = fetch_crosswalk(cache)
+        crosswalk = parse_crosswalk(crosswalk_raw.text)
     except CrosswalkUnavailable as exc:
         print(f"note: player crosswalk unavailable, matching by name only: {exc}", file=sys.stderr)
 
-    return enrich(players, meta, crosswalk=crosswalk, meta_by_id=meta_by_id)
+    for result, label in ((adp, "ADP"), (meta_raw, "Sleeper players"), (crosswalk_raw, "crosswalk")):
+        if result is not None and result.stale:
+            print(
+                f"warning: serving cached {label} from {_age(result.age_seconds)} ago; "
+                f"the live fetch failed ({result.error})",
+                file=sys.stderr,
+            )
+
+    result = enrich(players, meta, crosswalk=crosswalk, meta_by_id=meta_by_id)
+    return result, freshest(adp, meta_raw, crosswalk_raw)
+
+
+def _age(seconds: float) -> str:
+    """Human duration for a log line. Rounded: false precision reads as fact."""
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 90 * 60:
+        return f"{int(seconds / 60)}m"
+    if seconds < 48 * 3600:
+        return f"{int(seconds / 3600)}h"
+    return f"{int(seconds / 86400)}d"
 
 
 def _run_league(args, cache: Cache) -> int:
+    source = None
     if args.fixture:
         try:
             raw = args.fixture.read_text()
         except OSError as exc:
             print(f"error: could not read fixture: {exc}", file=sys.stderr)
             return 1
-        my_swid = None
+        # Fixture mode used to leave `my_swid` None, so the demo produced a page
+        # with no "your team" card while the page's own copy promised one.
+        my_swid = args.my_swid
     else:
         try:
             creds = load_espn_credentials(args.espn_config)
@@ -100,10 +135,13 @@ def _run_league(args, cache: Cache) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         try:
-            raw = fetch_league(creds.league_id, creds.season, creds.espn_s2, creds.swid, cache)
+            source = fetch_league(
+                creds.league_id, creds.season, creds.espn_s2, creds.swid, cache
+            )
         except EspnUnavailable as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
+        raw = source.text
         my_swid = creds.swid
 
     try:
@@ -118,21 +156,33 @@ def _run_league(args, cache: Cache) -> int:
     if week is None:
         return 1
 
+    age_seconds, stale = freshest(source)
     payload = league_payload(
         league,
         generated_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
-        stale_seconds=None,
+        age_seconds=age_seconds,
+        stale=stale,
         week=week.week,
         week_source=week.source,
     )
     write_board(payload, args.out)
     print(f"Wrote {len(league.teams)} teams to {args.out} — {week.note}")
+    if stale and source is not None:
+        print(
+            f"warning: this is cached ESPN data from {_age(source.age_seconds)} ago; "
+            f"the live fetch failed ({source.error})",
+            file=sys.stderr,
+        )
     if week.is_derived:
         print(f"note: {week.note}", file=sys.stderr)
     # The lineup-lock rule silently rescales every deadline this tool emits, so
     # an assumed or unrecognized value is said out loud rather than absorbed.
     if league.lineup_lock.note:
         print(f"note: {league.lineup_lock.note}", file=sys.stderr)
+    # Anything the adapter could not interpret. An unrecognized slot id means a
+    # starter may be miscategorized, which is worth a line on every run.
+    for note in league.diagnostics:
+        print(f"note: ESPN data: {note}", file=sys.stderr)
     return 0
 
 
@@ -147,7 +197,7 @@ def _resolve_week(league, cache: Cache, season: int):
         return WeekResolution(week=league.current_week, source="espn")
 
     try:
-        schedule = parse_schedule(fetch_schedule(season, cache), season)
+        schedule = parse_schedule(fetch_schedule(season, cache).text, season)
     except ScheduleUnavailable as exc:
         print(f"error: no week from ESPN and no schedule to derive one: {exc}", file=sys.stderr)
         return None
@@ -180,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        result = _load_players(config, cache)
+        result, (age_seconds, stale) = _load_players(config, cache)
     except (AdpUnavailable, PlayersUnavailable) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -197,7 +247,8 @@ def main(argv: list[str] | None = None) -> int:
         config,
         generated_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         unmatched=unmatched,
-        stale_seconds=None,
+        age_seconds=age_seconds,
+        stale=stale,
     )
     write_board(payload, args.out)
     print(f"Wrote {len(rows)} players to {args.out}")

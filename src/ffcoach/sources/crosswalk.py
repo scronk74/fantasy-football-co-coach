@@ -29,6 +29,7 @@ import httpx
 
 from ffcoach.cache import Cache
 from ffcoach.model.players import normalize_name
+from ffcoach.sources.base import SourceResult, stale_fallback
 
 CROSSWALK_URL = (
     "https://raw.githubusercontent.com/dynastyprocess/data/master/files/db_playerids.csv"
@@ -164,10 +165,10 @@ class Crosswalk:
         return candidates[0], confidence
 
 
-def fetch_crosswalk(cache: Cache, client: httpx.Client | None = None) -> str:
-    cached = cache.get(CACHE_KEY)
-    if cached is not None:
-        return cached
+def fetch_crosswalk(cache: Cache, client: httpx.Client | None = None) -> SourceResult:
+    hit = cache.get_with_age(CACHE_KEY)
+    if hit is not None:
+        return SourceResult(text=hit[0], age_seconds=hit[1])
 
     owns_client = client is None
     client = client or httpx.Client(timeout=60.0, follow_redirects=True)
@@ -175,18 +176,18 @@ def fetch_crosswalk(cache: Cache, client: httpx.Client | None = None) -> str:
         response = client.get(CROSSWALK_URL)
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        stale = cache.get_stale(CACHE_KEY)
-        if stale is not None:
-            return stale[0]
-        raise CrosswalkUnavailable(
-            f"could not fetch player crosswalk and no cached copy exists: {exc}"
-        ) from exc
+        return stale_fallback(cache, CACHE_KEY, exc, CrosswalkUnavailable, "player crosswalk")
     finally:
         if owns_client:
             client.close()
 
+    try:
+        parse_crosswalk(response.text)
+    except CrosswalkUnavailable as exc:
+        return stale_fallback(cache, CACHE_KEY, exc, CrosswalkUnavailable, "player crosswalk")
+
     cache.set(CACHE_KEY, response.text, ttl_seconds=TTL_SECONDS)
-    return response.text
+    return SourceResult(text=response.text)
 
 
 def parse_crosswalk(raw: str) -> Crosswalk:
