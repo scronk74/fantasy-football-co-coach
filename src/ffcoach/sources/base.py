@@ -17,6 +17,7 @@ which is how staleness is tested without sleeping.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ffcoach.cache import Cache
@@ -44,18 +45,36 @@ class SourceResult:
         return self.age_seconds == 0.0 and not self.stale
 
 
-def freshest(*results: SourceResult | None) -> tuple[float | None, bool]:
+def freshest(
+    *results: SourceResult | None,
+    lookups: Sequence[SourceResult | None] = (),
+) -> tuple[float | None, bool]:
     """Fold several sources into one `(age_seconds, any_stale)` for a payload.
 
-    The *oldest* age wins, not the newest: a page built from a fresh schedule
-    and a three-day-old roster is a three-day-old page. Reporting the newest
-    component would be a flattering lie, which is the failure this whole type
-    exists to prevent.
+    The *oldest* age wins among `results`, not the newest: a page built from a
+    fresh schedule and a three-day-old roster is a three-day-old page.
+    Reporting the newest component would be a flattering lie, which is the
+    failure this whole type exists to prevent.
+
+    `lookups` are the other half of that honesty. A lookup is a **join table**:
+    nothing on the page is drawn from it, it only resolves one source's id to
+    another's. The DynastyProcess crosswalk carries a seven-day TTL because
+    identity changes slowly; ADP carries six hours because it moves hourly in
+    draft season. Folding them by age meant a board whose every number was
+    minutes old announced itself as "data 6d old" -- true of the crosswalk,
+    false of everything the reader was about to draft on, and the kind of
+    false alarm that teaches someone to ignore the banner.
+
+    So a lookup's **age** does not age the page. Its `stale` flag still does:
+    past its own TTL it is serving a fallback, and a wrong bind puts the wrong
+    player's bye week on the page. That is material, and it is not hidden.
     """
     present = [r for r in results if r is not None]
-    if not present:
+    every = present + [r for r in lookups if r is not None]
+    if not every:
         return None, False
-    return max(r.age_seconds for r in present), any(r.stale for r in present)
+    age = max((r.age_seconds for r in present), default=None)
+    return age, any(r.stale for r in every)
 
 
 def stale_fallback(

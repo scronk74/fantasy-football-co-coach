@@ -66,7 +66,13 @@ Two properties of that template are load-bearing and were both absent until 2026
   cache indistinguishable, and both report paths then hardcoded `stale_seconds=None` — so
   stale data was published with a current timestamp and `stale: false`. `freshest()` folds
   several sources into one page-level age by taking the **oldest**, because a page is as
-  old as its oldest input.
+  old as its oldest input — except a **lookup** passed as `lookups=`, which is exempt from
+  the age and not from the staleness. A lookup is a join table: nothing on the page comes
+  from it, it only resolves ids. The crosswalk's TTL is seven days and ADP's is six hours,
+  so folding them by age made a board whose every number was minutes old announce
+  "data 6d old", four days before a draft. A false alarm is how a reader learns to ignore
+  the banner. Past its TTL a lookup still flips `stale`, because a wrong bind shows up on
+  the page as the wrong player's bye week.
 - **`fetch_*` parses before it caches.** A 200 is not proof of a usable body: an ESPN
   session-expiry page, a captive portal, and a truncated CSV all arrive with a good status
   code. Caching the raw body first destroyed the last known-good copy at exactly the moment

@@ -172,3 +172,36 @@ def test_all_fresh_sources_report_no_staleness():
 
 def test_no_sources_at_all_yields_no_claim_about_age():
     assert freshest(None) == (None, False)
+
+
+def test_a_lookup_tables_age_does_not_age_the_page():
+    """A crosswalk hit inside its TTL must not make a live board look old.
+
+    The DynastyProcess crosswalk has a seven-day TTL; ADP has six hours. On
+    2026-09-03 the crosswalk was 5.9 days old and every displayed number was
+    minutes old, and the board announced "data 6d old" -- a false alarm four
+    days before a draft, which is how a reader learns to ignore the banner.
+    """
+    age, stale = freshest(
+        SourceResult("adp", age_seconds=120.0),
+        lookups=(SourceResult("crosswalk", age_seconds=513668.0),),
+    )
+    assert age == 120.0
+    assert stale is False
+
+
+def test_a_stale_lookup_still_marks_the_page_stale():
+    """Past its TTL a lookup is serving a fallback, and a wrong bind is visible
+    on the page: the wrong player's bye week, the wrong injury badge."""
+    age, stale = freshest(
+        SourceResult("adp", age_seconds=0.0),
+        lookups=(SourceResult("crosswalk", age_seconds=10**7, stale=True),),
+    )
+    assert age == 0.0
+    assert stale is True
+
+
+def test_a_page_built_only_from_lookups_claims_no_age():
+    age, stale = freshest(lookups=(SourceResult("crosswalk", age_seconds=99.0),))
+    assert age is None
+    assert stale is False
