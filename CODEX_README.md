@@ -6,6 +6,16 @@ This is a personal fantasy football tool — one ESPN league, one user. It is mi
 (14 of 42 planned steps). I am not looking for validation. I want the things I have talked
 myself into that are wrong, and the things I have not thought of at all.
 
+**Read this before you judge the shape of the repo.** The product is **in-season alerting
+that prevents missed points** — nothing else. The draft board that dominates Stage A and a
+third of the test suite is **legacy scaffolding** (`ROADMAP.md` D-050): it was built while
+the league invite was outstanding because it was the only thing buildable without a league,
+and on 2026-09-03 the user said he does not want draft help at all. It stays because
+deleting it costs a day this week does not have. So: reviewing the draft board is wasted
+budget, and "Phase 1 complete" does not mean the valuable half is done — `advisors/lineup.py`
+is 543 tested lines with **no production caller**, and every notifier, all scheduling, all
+logging and the Week page are unbuilt with the first kickoff on **Wed 2026-09-09** (R-4).
+
 **A full review was done on 2026-08-31** ([`docs/end-to-end-review-2026-08-31.md`](docs/end-to-end-review-2026-08-31.md))
 and its confirmed findings are fixed ([`docs/review-reply-2026-08-31.md`](docs/review-reply-2026-08-31.md)
 says what was implemented, what was challenged, and what it missed). **Read the reply before
@@ -22,14 +32,18 @@ than forty that are technically true.
 - **Skip style nits.** There is no linter configured yet; that is a known gap, not a finding.
   Do not report import order, docstring formatting, or line length.
 - **Skip "X is not implemented yet"** unless you think the *plan* has it in the wrong place.
-  Stages D–H are deliberately unbuilt; see `ROADMAP.md` §3.3.
+  Stages D–H are deliberately unbuilt; see `ROADMAP.md` §3.3. The one place that critique
+  *is* wanted: R-4 asks what to cut from D/E/F to guard Week 1, and an argument about the
+  right cut is worth more to me than anything else in this repo right now.
+- **Skip the draft board entirely** — `web/index.html`, `advisors/draft.py`,
+  `model/value.py`, `model/tiers.py`, `sources/ffcalc.py`. Legacy, per D-050 above.
 - For a correctness claim, give a **failure scenario**: concrete inputs → wrong output. If you
   cannot construct one, say it is a suspicion rather than a bug.
 
 ## Orient yourself in five minutes
 
 ```bash
-uv sync && uv run pytest      # 356 tests, fully offline, no credentials needed
+uv sync && uv run pytest      # 359 tests, fully offline, no credentials needed
 npm test                      # 53 browser tests; node --test, no npm packages
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # end-to-end, no ESPN access
 uv run ffcoach doctor
@@ -60,12 +74,11 @@ structured findings, never prose.
 
 ## Do not spend budget here — I already know
 
-1. **`leagues/espn.py` is unverified against a real league.** I have not been invited to the
-   league yet, so there are no cookies and no live data. It was built from community docs against
-   a **hand-written fixture** (`tests/fixtures/espn_league.json`). Tests passing proves internal
-   consistency, *not* that field names match ESPN. You cannot verify this either — neither of us
-   can see the API. Reviewing it for "correctness against ESPN" produces confident guesses.
-   Useful instead: **does it fail safely when a field is missing or renamed?**
+1. **`leagues/espn.py` field names — settled 2026-09-03.** It was built from community docs
+   against a hand-written fixture, and it has now run against the real league: 12 teams,
+   **zero diagnostics**. The names match. You still cannot see the API and neither can I, so
+   reviewing it for "correctness against ESPN" still produces confident guesses. Useful
+   instead: **does it fail safely when a field is missing or renamed?** — invariant 9.
 2. **No linter, no formatter, no type checker, no coverage measurement.** Known; planned.
 3. **The ESPN fixture has only two teams**, one with an empty roster. Small on purpose.
 4. **Vegas odds are parked** until the season starts (`Q-3`), because the endpoint returns empty
@@ -73,10 +86,10 @@ structured findings, never prose.
 5. **Everything in the 2026-08-31 review's "Prioritized findings".** Confirmed and fixed, or
    confirmed and explicitly deferred with a reason. `docs/review-reply-2026-08-31.md` §1 and §2
    say which is which; §3 lists what that review missed, which is a better place to start.
-6. **The draft board's a11y and mobile gaps.** Known, real, deliberately deferred — the
-   responsive patterns get settled on the Week page (F1) rather than retrofitted twice.
-   (The board's "Value"/bargain-reach model is *no longer* deferred: it was removed on
-   2026-09-03. `rank` came from the ADP sort, so `adp - rank` graded ADP against itself.)
+6. **Anything about the draft board.** Legacy per D-050 — see the top of this file. Its
+   a11y and mobile gaps are known and will not be fixed there; the responsive patterns get
+   settled on the Week page (F1). Its "Value"/bargain-reach model was removed on 2026-09-03
+   because `rank` came from the ADP sort, so `adp - rank` graded ADP against itself.
 7. **Team defenses never resolve in the crosswalk.** They are absent from the upstream data
    entirely. Structural, documented, not a bug.
 
@@ -151,6 +164,15 @@ replacement, the IR-as-bench-swap case, and where to split `lineup.py`. Still op
    later and the early alert is unactionable noise?
 6. **A cache hit inside its TTL is reported as not-stale but carries a nonzero age.** Is one
    `stale` boolean plus an age enough for the health panel, or does it need per-source state?
+   *(Partly answered the hard way on 2026-09-03: one page-level age was actively wrong. The
+   crosswalk's TTL is seven days and ADP's is six hours, so folding them by age made a board
+   whose every number was two minutes old announce "data 6d old". `freshest()` now exempts
+   lookup tables from the age but not from the staleness — D-053. The general question stands:
+   does the health panel need per-source rows?)*
+7. **`league.diagnostics` is a tuple of free-text strings.** It reached the payload and the page
+   as designed, and on the first live run it was empty — so the mechanism has never actually
+   carried anything real. Is untyped prose the right shape for something a UI must group,
+   count, and let the user dismiss?
 
 ## Review tracks
 
@@ -181,8 +203,13 @@ the nav everywhere.
 - The stated goal is *"see my team's situation at a glance."* Does the plan deliver that?
 
 ### 4. Plan and sequencing
-`ROADMAP.md` §3.3 has 40 steps across stages A–H, with 43 decisions in §6 and roadblocks in §7.
+`ROADMAP.md` §3.3 has 42 steps across stages A–H, with 53 decisions in §6 and four roadblocks in §7.
 
+- **The question I most want answered: what would you cut?** R-4 — the first Week 1 kickoff is
+  **Wed 2026-09-09 20:20 ET**, and C7, every notifier, all scheduling, all logging and the Week
+  page are unbuilt. My candidate cut is E2/E3/E4 (launchd, dead-man's switch, delivery-failure
+  fallback) in favour of C7 + D1 + F1 — a check I run and read, before a check that runs itself.
+  Argue me out of it, or tell me what I am cutting that I will regret in Week 3.
 - Is the stage order right? Notifications (D) come before the dashboard (F). My stated V1 goal
   weights user experience and control as heavily as the alerts themselves.
 - **A specific tension I want challenged:** the feature I originally described as most important —
