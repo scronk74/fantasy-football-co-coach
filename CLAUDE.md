@@ -66,7 +66,13 @@ Two properties of that template are load-bearing and were both absent until 2026
   cache indistinguishable, and both report paths then hardcoded `stale_seconds=None` — so
   stale data was published with a current timestamp and `stale: false`. `freshest()` folds
   several sources into one page-level age by taking the **oldest**, because a page is as
-  old as its oldest input.
+  old as its oldest input — except a **lookup** passed as `lookups=`, which is exempt from
+  the age and not from the staleness. A lookup is a join table: nothing on the page comes
+  from it, it only resolves ids. The crosswalk's TTL is seven days and ADP's is six hours,
+  so folding them by age made a board whose every number was minutes old announce
+  "data 6d old", four days before a draft. A false alarm is how a reader learns to ignore
+  the banner. Past its TTL a lookup still flips `stale`, because a wrong bind shows up on
+  the page as the wrong player's bye week.
 - **`fetch_*` parses before it caches.** A 200 is not proof of a usable body: an ESPN
   session-expiry page, a captive portal, and a truncated CSV all arrive with a good status
   code. Caching the raw body first destroyed the last known-good copy at exactly the moment
@@ -172,7 +178,12 @@ These come from direct user feedback and have executable assertions behind them:
 3. **No dollar figures.** The league uses waiver priority, not a bidding budget. Both
    `test_report.py` and `render.test.js` assert no `$` is ever emitted.
 4. **Every recommendation states its reason inline**, in both modes. No unexplained stars
-   or flags — see `advisors/draft.py::_reason`.
+   or flags — see `advisors/draft.py::_reason`. Each clause must trace to something
+   *computed*: the board carries no bargain/reach verdict, because `rank` is the ADP sort
+   order, so `adp - rank` graded ADP against itself and drifted with list depth (a DEF at
+   ADP 196 on row 271 read "reach"). Grading market price needs an independent ranking,
+   and there is no projection model. `availability` — a normal CDF over FFC's `stdev` —
+   stays, because it is real.
 5. **Status is never carried by colour alone.** The injury badge is a letter plus a
    `title`; `league_render.test.js` asserts both. A red dot is invisible to a screen reader
    and to roughly one man in twelve.

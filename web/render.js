@@ -53,12 +53,6 @@ export function freshnessText(payload, command) {
   return age ? `data ${age} old` : "";
 }
 
-export function formatValue(value) {
-  const n = Number(value);
-  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
-  return `${sign}${Math.abs(n).toFixed(1)}`;
-}
-
 export function positionClass(position) {
   return POSITION_CLASSES[position] ?? "pos-k";
 }
@@ -94,9 +88,6 @@ export function rowHtml(player, { explain = false, drafted = false } = {}) {
     ? `<span class="reason">${escapeHtml(player.reason)}</span>`
     : "";
   // Explain mode annotates; it never replaces a term or reorders a column.
-  const verdictNote = explain
-    ? `<span class="note">${escapeHtml(player.verdict_text)}</span>`
-    : "";
   const availNote = explain
     ? `<span class="note">${escapeHtml(player.availability_text)}</span>`
     : "";
@@ -110,21 +101,20 @@ export function rowHtml(player, { explain = false, drafted = false } = {}) {
   <td class="name">${name} ${injury}${reason}</td>
   <td><span class="pos ${positionClass(player.position)}">${escapeHtml(player.position)}</span></td>
   <td class="num">${Number(player.adp).toFixed(1)}</td>
-  <td class="num value ${player.verdict}">${formatValue(player.value)}${verdictNote}</td>
   <td class="avail ${player.availability}">${escapeHtml(player.availability)}${availNote}</td>
 </tr>`;
 }
 
 export function boardHtml(players, opts = {}) {
   if (players.length === 0) {
-    return `<tr><td colspan="7" class="empty">No players match this filter.</td></tr>`;
+    return `<tr><td colspan="6" class="empty">No players match this filter.</td></tr>`;
   }
   const drafted = opts.draftedIds ?? new Set();
   return players
     .map((p) => {
       const row = rowHtml(p, { ...opts, drafted: drafted.has(playerId(p)) });
       const brk = p.tier_break_after
-        ? `<tr class="tier-break"><td colspan="7">Noticeable drop in quality below this line</td></tr>`
+        ? `<tr class="tier-break"><td colspan="6">Noticeable drop in quality below this line</td></tr>`
         : "";
       return row + brk;
     })

@@ -73,9 +73,10 @@ structured findings, never prose.
 5. **Everything in the 2026-08-31 review's "Prioritized findings".** Confirmed and fixed, or
    confirmed and explicitly deferred with a reason. `docs/review-reply-2026-08-31.md` §1 and §2
    say which is which; §3 lists what that review missed, which is a better place to start.
-6. **The draft board's a11y and mobile gaps, and its "Value" model.** Both known, both real, both
-   deliberately deferred — the draft is out of scope for the in-season product and the responsive
-   patterns get settled on the Week page (F1) rather than retrofitted twice.
+6. **The draft board's a11y and mobile gaps.** Known, real, deliberately deferred — the
+   responsive patterns get settled on the Week page (F1) rather than retrofitted twice.
+   (The board's "Value"/bargain-reach model is *no longer* deferred: it was removed on
+   2026-09-03. `rank` came from the ADP sort, so `adp - rank` graded ADP against itself.)
 7. **Team defenses never resolve in the crosswalk.** They are absent from the upstream data
    entirely. Structural, documented, not a bug.
 

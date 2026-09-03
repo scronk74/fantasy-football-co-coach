@@ -103,7 +103,10 @@ def _load_players(config, cache):
             )
 
     result = enrich(players, meta, crosswalk=crosswalk, meta_by_id=meta_by_id)
-    return result, freshest(adp, meta_raw, crosswalk_raw)
+    # The crosswalk is a join table: it puts no number on the board, it only
+    # binds one source's id to another's. Its age is not the board's age; its
+    # staleness still is. See sources/base.freshest.
+    return result, freshest(adp, meta_raw, lookups=(crosswalk_raw,))
 
 
 def _age(seconds: float) -> str:
