@@ -23,8 +23,8 @@ def test_fetch_hits_network_once_then_serves_cache(tmp_path):
     cache = Cache(tmp_path / "c.sqlite3")
     calls = []
     client = client_returning('{"id": 1}', calls=calls)
-    a = fetch_league("999", 2026, "s2", "{swid}", cache, client=client)
-    b = fetch_league("999", 2026, "s2", "{swid}", cache, client=client)
+    a = fetch_league("999", 2026, "s2", "{swid}", cache, client=client).text
+    b = fetch_league("999", 2026, "s2", "{swid}", cache, client=client).text
     assert a == b == '{"id": 1}'
     assert len(calls) == 1
 
@@ -77,7 +77,7 @@ def test_fetch_falls_back_to_stale_cache_on_non_auth_failure(tmp_path):
     cache = Cache(tmp_path / "c.sqlite3")
     fetch_league("999", 2026, "s2", "{swid}", cache, client=client_returning('{"id": 1}'))
     cache.set(_cache_key("999", 2026), '{"id": 1}', ttl_seconds=-1)
-    got = fetch_league("999", 2026, "s2", "{swid}", cache, client=client_returning("", status=500))
+    got = fetch_league("999", 2026, "s2", "{swid}", cache, client=client_returning("", status=500)).text
     assert got == '{"id": 1}'
 
 

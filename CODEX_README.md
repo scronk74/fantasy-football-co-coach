@@ -3,8 +3,13 @@
 **If you are an AI reviewing this repo: read this first, then give concise, opinionated feedback.**
 
 This is a personal fantasy football tool — one ESPN league, one user. It is mid-flight
-(13 of 40 planned steps). I am not looking for validation. I want the things I have talked
+(14 of 42 planned steps). I am not looking for validation. I want the things I have talked
 myself into that are wrong, and the things I have not thought of at all.
+
+**A full review was done on 2026-08-31** ([`docs/end-to-end-review-2026-08-31.md`](docs/end-to-end-review-2026-08-31.md))
+and its confirmed findings are fixed ([`docs/review-reply-2026-08-31.md`](docs/review-reply-2026-08-31.md)
+says what was implemented, what was challenged, and what it missed). **Read the reply before
+reviewing** — re-finding those costs your budget and tells me nothing.
 
 ## What I want back
 
@@ -24,8 +29,8 @@ than forty that are technically true.
 ## Orient yourself in five minutes
 
 ```bash
-uv sync && uv run pytest      # 295 tests, fully offline, no credentials needed
-npm test                      # 38 browser tests; node --test, no npm packages
+uv sync && uv run pytest      # 356 tests, fully offline, no credentials needed
+npm test                      # 53 browser tests; node --test, no npm packages
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # end-to-end, no ESPN access
 uv run ffcoach doctor
 ```
@@ -48,9 +53,9 @@ structured findings, never prose.
 | Area | Files | How much I trust it |
 |---|---|---|
 | `model/` — pure: no network, filesystem, or clock | `week.py`, `deadlines.py`, `value.py`, `tiers.py`, `players.py` | **High.** Correctness fully determined by the code. Best place to find real bugs. |
-| `advisors/` — the detection logic | `lineup.py` (362 lines), `draft.py` | **Medium.** Recently grown; most likely to hide a logic hole. |
+| `advisors/` — the detection logic | `lineup.py` (543 lines), `roster_plan.py`, `draft.py` | **Medium.** Recently grown; most likely to hide a logic hole. |
 | `sources/` — I/O with cache + stale fallback | `schedule.py`, `crosswalk.py`, `sleeper.py`, `ffcalc.py`, `match.py` | **Medium-high.** All verified against live endpoints. |
-| `leagues/espn.py` — ESPN JSON parser | 221 lines | **Low, and unavoidably so.** See below. |
+| `leagues/espn.py` — ESPN JSON parser | ~290 lines | **Low, and unavoidably so.** See below. Now fails *safely* — see invariant 9. |
 | `web/` — vanilla ES modules, no build step | `render.js`, `league_render.js` compute; `main.js`, `league_main.js` touch DOM | **Medium.** Only two pages exist. |
 
 ## Do not spend budget here — I already know
@@ -65,7 +70,13 @@ structured findings, never prose.
 3. **The ESPN fixture has only two teams**, one with an empty roster. Small on purpose.
 4. **Vegas odds are parked** until the season starts (`Q-3`), because the endpoint returns empty
    in the offseason and cannot be checked yet.
-5. **Team defenses never resolve in the crosswalk.** They are absent from the upstream data
+5. **Everything in the 2026-08-31 review's "Prioritized findings".** Confirmed and fixed, or
+   confirmed and explicitly deferred with a reason. `docs/review-reply-2026-08-31.md` §1 and §2
+   say which is which; §3 lists what that review missed, which is a better place to start.
+6. **The draft board's a11y and mobile gaps, and its "Value" model.** Both known, both real, both
+   deliberately deferred — the draft is out of scope for the in-season product and the responsive
+   patterns get settled on the Week page (F1) rather than retrofitted twice.
+7. **Team defenses never resolve in the crosswalk.** They are absent from the upstream data
    entirely. Structural, documented, not a bug.
 
 ## Load-bearing invariants — please try to break these
@@ -82,10 +93,21 @@ Each is enforced by a test. If you can construct a case that violates one, that 
 4. **Explain mode annotates only** — never changes layout or ordering.
 5. **Every recommendation states its reason inline**, in both modes.
 6. **`model/` is pure** — no network, no filesystem, no clock. Clocks are injected as `now`.
-7. **A deadline can never fall after the lock.** Added recently; see below.
+7. **A deadline never falls after the lock, and never describes an impossible action.**
+   `model/deadlines.py` returns a *kind* of fix, not just a time — a waiver claim that cannot
+   process before the lock is reported as `ADD_BEFORE_LOCK`, not as a claim with an earlier
+   deadline.
 8. **Nothing about league format is hardcoded** — scoring, roster slots, team count, and waiver
-   schedule all come from config or the league API. *(I suspect this one is already violated —
-   see the suspicions list.)*
+   schedule all come from config or the league API. *One known, documented exception:
+   `_SLOT_ELIGIBILITY` in `advisors/lineup.py`. See CLAUDE.md's config section.*
+9. **An unusable external value becomes `UNKNOWN` plus a diagnostic, never a plausible default.**
+   Unknown ESPN slot ids do not become `BN`; unknown pro teams do not become `FA`; a schedule row
+   we cannot read does not become a bye. Each of those defaults produced a clean run and an
+   unguarded lineup.
+10. **Data freshness travels with the data.** `SourceResult` carries age and staleness; a page's
+    age is its *oldest* input; a source parses before it caches, so a garbage HTTP 200 cannot
+    evict the last usable copy.
+11. **One bench player is offered to at most one opening.** `advisors/roster_plan.py`.
 
 ## The defect class — my sharpest prior, use it
 
@@ -98,6 +120,9 @@ and none would have been caught by the tests as written:
 | Every roster slot has a player in it | Empty starting slots exist and are the most elementary failure | Advisor iterated the roster; a slot with nobody in it has no entry to iterate, so it was **invisible** |
 | The deadline is kickoff | The deadline belongs to the *available fix* — a swap and a waiver claim have different deadlines | Alerts arriving four days after the claim window closed |
 | A deadline is bounded by nothing | It cannot fall after the lineup locks | A locked slot advertising a future deadline reads as "you still have time" |
+| Clamping the deadline to the lock fixes that | It fixes the *number* and leaves the advice false | "Claim someone by Thu 8:15" for a claim that processes Friday — plausible, impossible, survives inspection |
+| A finding with no kickoff never locks | It is bounded by the week's last game | A Week 5 empty slot still reported as actionable on New Year's Day |
+| A cached response is a usable response | A 200 can be a login page | Caching it before parsing destroyed the last copy that worked |
 
 **The most useful thing you can do: find the next one.** What else in this codebase is *assumed*
 rather than read from data or verified against a source?
@@ -107,19 +132,24 @@ rather than read from data or verified against a source?
 I would rather hand you these than have you spend the budget rediscovering them. Tell me which
 actually matter.
 
-1. **Two broken starters can be offered the same replacement.** `find_replacements()` is called
-   independently per finding with no accounting for prior assignment. Two OUT wide receivers with
-   one healthy bench WR produce two findings that each name him. Fix one and the other is still
-   broken. How much does this matter in practice?
-2. **`_SLOT_ELIGIBILITY` in `advisors/lineup.py` is hardcoded** (`FLEX` = RB/WR/TE). That appears
-   to violate invariant 8. Superflex and IDP leagues would be silently wrong. Does this matter for
-   a single-league personal tool, or is it a real portability defect?
-3. **Bye look-ahead only scans week + 1.** If the waiver deadline is further out than that, is one
+Three of the original six were confirmed by the 2026-08-31 review and are now fixed: the shared
+replacement, the IR-as-bench-swap case, and where to split `lineup.py`. Still open:
+
+1. **`_SLOT_ELIGIBILITY` in `advisors/lineup.py` is hardcoded** (`FLEX` = RB/WR/TE), the one
+   documented exception to invariant 8. Superflex and IDP leagues would be silently wrong. A real
+   portability defect, or acceptable for a one-league tool? *(The last review did not address
+   this.)*
+2. **Bye look-ahead only scans week + 1.** If the waiver deadline is further out than that, is one
    week of warning enough?
-4. **A healthy player parked in an IR slot may be offered as a replacement**, but ESPN will not let
-   you start directly from IR. Real, or can't-happen?
-5. **`derive_week()` assumes a 4-hour maximum game length.** Arbitrary. Does it break anywhere?
-6. **`advisors/lineup.py` is 362 lines** and has grown three times. Should it be split, and where?
+3. **`derive_week()` assumes a 4-hour maximum game length.** Arbitrary. Does it break anywhere?
+4. **`_reason()` builds user-facing prose inside an advisor** whose stated contract is "structured
+   findings, never prose". Reason codes rendered per channel, or advisor-owned sentences? Deferred
+   to D2, but the argument is worth having now.
+5. **`slot_lock()` falls back to the week's *first* kickoff when a game's time is unpublished**, to
+   fail toward alerting early. Is failing early right when the real kickoff might be three days
+   later and the early alert is unactionable noise?
+6. **A cache hit inside its TTL is reported as not-stale but carries a nonzero age.** Is one
+   `stale` boolean plus an age enough for the health panel, or does it need per-source state?
 
 ## Review tracks
 

@@ -5,6 +5,7 @@ import pytest
 
 from ffcoach.advisors.lineup import actionable, find_problems, find_replacements
 from ffcoach.leagues.base import LineupLock, LockMode, RosterEntry, Team
+from ffcoach.model.deadlines import FixKind
 from ffcoach.sources.schedule import parse_schedule
 
 SCHEDULE = Path(__file__).parent / "fixtures" / "nfl_schedule_2025.csv"
@@ -275,12 +276,25 @@ def test_empty_slot_sorts_with_out_not_after_bye(schedule, week):
     assert kinds.index("empty_slot") < kinds.index("bye")
 
 
-def test_an_empty_slot_is_never_locked(schedule, week):
-    """No player means no kickoff, so the slot stays changeable."""
-    late = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+def test_an_empty_slot_stays_changeable_while_the_week_is_still_running(schedule, week):
+    """No player means no kickoff of its own, so it is not frozen at 1pm."""
     team = team_with()
-    found = find_problems(team, schedule, week, late, required_slots={"QB": 1})
+    found = find_problems(team, schedule, week, EARLY, required_slots={"QB": 1})
     assert found[0].locked is False
+
+
+def test_an_empty_slot_does_not_stay_fixable_after_the_week_ends(schedule, week):
+    """The bug this replaced: "no kickoff" was read as "never locks".
+
+    An empty Week 5 slot reported itself as actionable on New Year's Day,
+    because nothing bounded a slot that had no player to lock it. Once the
+    week's last game starts, nothing anyone adds can score in it.
+    """
+    late = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    found = find_problems(team_with(), schedule, week, late, required_slots={"QB": 1})
+    assert found[0].locks_at == schedule.lock_windows(week)[-1]
+    assert found[0].locked is True
+    assert found[0].is_actionable(late) is False
 
 
 def test_omitting_required_slots_skips_the_check_entirely(schedule, week):
@@ -363,11 +377,17 @@ def test_an_empty_slot_the_bench_covers_does_not_need_a_claim(schedule, week):
     assert found.needs_waiver is False
 
 
-def test_deadline_is_none_rather_than_guessed_when_waivers_are_unknown(schedule, week):
+def test_an_unknown_waiver_schedule_is_reported_as_unknown_not_guessed(schedule, week):
+    """No waiver schedule published, so we never name a claim window.
+
+    The deadline that remains is the week's own bound, which is a fact about
+    the NFL calendar rather than an invented league setting.
+    """
     bye = bye_team_for(schedule, week)
     team = team_with(entry("Bye Guy", "WR", bye))
     found = find_problems(team, schedule, week, EARLY)[0]
-    assert found.deadline is None
+    assert found.fix.kind is FixKind.UNKNOWN
+    assert found.deadline == schedule.lock_windows(week)[-1]
     assert found.needs_waiver is True
 
 
@@ -486,12 +506,20 @@ def test_bye_finding_has_no_kickoff(schedule, week):
     assert find_problems(team, schedule, week, EARLY)[0].kickoff is None
 
 
-def test_a_bye_finding_is_never_locked(schedule, week):
-    """No kickoff means the slot stays changeable all week."""
+def test_a_bye_starters_slot_stays_changeable_during_his_off_week(schedule, week):
+    """He has no kickoff of his own, so nothing freezes the slot at 1pm."""
+    bye = bye_team_for(schedule, week)
+    team = team_with(entry("Bye Guy", "WR", bye))
+    assert find_problems(team, schedule, week, EARLY)[0].locked is False
+
+
+def test_a_bye_starter_stops_being_actionable_once_the_week_is_over(schedule, week):
+    """Same defect as the empty slot: no kickoff was read as never locking."""
     bye = bye_team_for(schedule, week)
     late = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
-    team = team_with(entry("Bye Guy", "WR", bye))
-    assert find_problems(team, schedule, week, late)[0].locked is False
+    found = find_problems(team_with(entry("Bye Guy", "WR", bye)), schedule, week, late)[0]
+    assert found.locked is True
+    assert found.is_actionable(late) is False
 
 
 def test_no_finding_ever_emits_a_dollar_figure(schedule, week):
@@ -596,14 +624,20 @@ def test_per_player_locking_leaves_those_two_deadlines_different(
     assert len({f.deadline for f in found}) == 2
 
 
-def test_an_empty_slot_locks_too_under_a_weekly_lock(schedule, week):
-    """Per-player locking leaves an empty slot fixable all week; weekly does not."""
+def test_an_empty_slot_locks_at_the_first_game_under_a_weekly_lock(schedule, week):
+    """Weekly locking freezes an empty slot with everything else, on Thursday.
+
+    Per-player locking leaves it open longer -- but not forever: it still ends
+    at the week's last kickoff, because after that no addition can score.
+    """
     team = team_with(entry("Bench Guy", "RB", "KC", slot="BN"))
     args = (team, schedule, week, EARLY)
     weekly = find_problems(*args, required_slots={"RB": 1}, lock=WEEKLY)[0]
     per_player = find_problems(*args, required_slots={"RB": 1}, lock=PER_PLAYER)[0]
-    assert weekly.locks_at == schedule.lock_windows(week)[0]
-    assert per_player.locks_at is None
+    windows = schedule.lock_windows(week)
+    assert weekly.locks_at == windows[0]
+    assert per_player.locks_at == windows[-1]
+    assert weekly.locks_at < per_player.locks_at
 
 
 def test_omitting_the_lock_behaves_exactly_like_espns_default(schedule, week, late_team):
@@ -611,3 +645,152 @@ def test_omitting_the_lock_behaves_exactly_like_espns_default(schedule, week, la
     assert find_problems(team, schedule, week, EARLY) == find_problems(
         team, schedule, week, EARLY, lock=PER_PLAYER
     )
+
+
+# --- one bench player cannot fix two slots (D-045) ---
+#
+# Every card below was individually true before this and the set was jointly
+# impossible: two findings naming the same man, so fixing either left the other
+# exactly as broken.
+
+
+def test_two_broken_starters_are_not_both_offered_the_same_replacement(schedule, week):
+    team = team_with(
+        entry("Hurt One", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Hurt Two", "WR", "BUF", slot="WR", injury="OUT"),
+        entry("Only Sub", "WR", "KC", slot="BN"),
+    )
+    found = find_problems(team, schedule, week, EARLY)
+    named = [f.replacements for f in found]
+    assert sum("Only Sub" in r for r in named) == 1
+    assert () in named, "the uncovered slot must say so rather than share him"
+
+
+def test_the_uncovered_slot_becomes_an_acquisition_not_a_swap(schedule, week):
+    team = team_with(
+        entry("Hurt One", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Hurt Two", "WR", "BUF", slot="WR", injury="OUT"),
+        entry("Only Sub", "WR", "KC", slot="BN"),
+    )
+    found = find_problems(team, schedule, week, EARLY, waiver_deadline=WAIVER)
+    kinds = {f.fix.kind for f in found}
+    assert FixKind.BENCH_SWAP in kinds
+    assert kinds - {FixKind.BENCH_SWAP}, "one slot still needs someone acquired"
+
+
+def test_an_empty_slot_and_a_broken_starter_compete_for_the_same_bench(schedule, week):
+    """They are collected together precisely so they cannot both be told yes."""
+    team = team_with(
+        entry("Hurt Guy", "RB", "KC", slot="RB", injury="OUT"),
+        entry("Only Back", "RB", "BUF", slot="BN"),
+    )
+    found = find_problems(team, schedule, week, EARLY, required_slots={"RB": 2})
+    assert sum("Only Back" in f.replacements for f in found) == 1
+
+
+def test_a_deep_bench_still_covers_every_opening(schedule, week):
+    """The allocation must not invent scarcity that is not there."""
+    team = team_with(
+        entry("Hurt One", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Hurt Two", "WR", "BUF", slot="WR", injury="OUT"),
+        entry("Sub One", "WR", "KC", slot="BN"),
+        entry("Sub Two", "WR", "BUF", slot="BN"),
+    )
+    found = find_problems(team, schedule, week, EARLY)
+    assert all(f.replacements for f in found)
+    assert len({f.replacements[0] for f in found}) == 2
+
+
+def test_the_scarce_position_is_served_before_flex(schedule, week):
+    """FLEX could take the only RB and leave the RB slot with nothing."""
+    team = team_with(
+        entry("Hurt Back", "RB", "KC", slot="RB", injury="OUT"),
+        entry("Hurt Flex", "WR", "BUF", slot="FLEX", injury="OUT"),
+        entry("Sub Back", "RB", "KC", slot="BN"),
+        entry("Sub Wide", "WR", "BUF", slot="BN"),
+    )
+    found = {f.lineup_slot: f for f in find_problems(team, schedule, week, EARLY)}
+    assert found["RB"].replacements[0] == "Sub Back"
+    assert found["FLEX"].replacements[0] == "Sub Wide"
+
+
+# --- IR is a prerequisite, not a bench slot ---
+
+
+def test_a_healthy_player_on_ir_is_not_offered_as_a_direct_swap(schedule, week):
+    """ESPN refuses to start a player out of an IR slot, so naming him as the
+    replacement describes a move the site will not allow."""
+    team = team_with(
+        entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Back From IR", "WR", "BUF", slot="IR"),
+    )
+    found = find_problems(team, schedule, week, EARLY)[0]
+    assert found.replacements == ()
+
+
+def test_a_healthy_player_on_ir_is_reported_rather_than_dropped(schedule, week):
+    """Nothing is dropped silently: he is a real option, at an extra step."""
+    team = team_with(
+        entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Back From IR", "WR", "BUF", slot="IR"),
+    )
+    found = find_problems(team, schedule, week, EARLY)[0]
+    assert found.ir_candidates == ("Back From IR",)
+    assert "IR" in found.reason
+
+
+def test_a_genuinely_injured_ir_player_is_not_reported_as_available(schedule, week):
+    team = team_with(
+        entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Still Hurt", "WR", "BUF", slot="IR", injury="INJURY_RESERVE"),
+    )
+    assert find_problems(team, schedule, week, EARLY)[0].ir_candidates == ()
+
+
+# --- a claim that cannot land is not offered as a claim ---
+
+
+def test_a_waiver_run_after_the_lock_is_not_presented_as_a_claim(schedule, week):
+    """The correction to C5's clamp, end to end through the advisor."""
+    kick = schedule.kickoff("KC", week)
+    late_waiver = kick + dt.timedelta(days=1)
+    team = team_with(entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"))
+    found = find_problems(
+        team, schedule, week, EARLY, waiver_deadline=late_waiver
+    )[0]
+    assert found.fix.kind is FixKind.ADD_BEFORE_LOCK
+    assert found.fix.claim_lands_in_time is False
+    assert found.deadline == kick
+    assert "cannot arrive in time" in found.reason
+
+
+def test_a_waiver_run_before_the_lock_is_still_a_claim(schedule, week):
+    kick = schedule.kickoff("KC", week)
+    team = team_with(entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"))
+    found = find_problems(
+        team, schedule, week, EARLY, waiver_deadline=kick - dt.timedelta(days=1)
+    )[0]
+    assert found.fix.kind is FixKind.WAIVER_CLAIM
+    assert "Claim someone" in found.reason
+
+
+# --- actionable() now asks the whole question ---
+
+
+def test_a_finding_whose_replacement_already_played_is_not_actionable(schedule, week):
+    """It used to check only `locked`. The slot can be open while every option
+    that could fill it has kicked off."""
+    team = team_with(
+        entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Early Sub", "WR", "KC", slot="BN"),
+    )
+    found = find_problems(team, schedule, week, EARLY)
+    after = found[0].deadline + dt.timedelta(minutes=1)
+    assert found[0].is_actionable(EARLY) is True
+    assert actionable(found, after) == []
+
+
+def test_actionable_without_a_clock_still_answers_the_old_weaker_question(schedule, week):
+    team = team_with(entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"))
+    found = find_problems(team, schedule, week, EARLY)
+    assert actionable(found) == found

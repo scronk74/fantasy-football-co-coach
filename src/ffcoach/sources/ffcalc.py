@@ -13,6 +13,7 @@ import httpx
 
 from ffcoach.cache import Cache
 from ffcoach.model.players import Player
+from ffcoach.sources.base import SourceResult, stale_fallback
 
 FFCALC_URL = "https://fantasyfootballcalculator.com/api/v1/adp/{scoring}"
 TTL_SECONDS = 6 * 60 * 60
@@ -34,11 +35,11 @@ def fetch_adp(
     season: int,
     cache: Cache,
     client: httpx.Client | None = None,
-) -> str:
+) -> SourceResult:
     key = _cache_key(scoring, teams, season)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
+    hit = cache.get_with_age(key)
+    if hit is not None:
+        return SourceResult(text=hit[0], age_seconds=hit[1])
 
     owns_client = client is None
     client = client or httpx.Client(timeout=20.0)
@@ -49,16 +50,20 @@ def fetch_adp(
         )
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        stale = cache.get_stale(key)
-        if stale is not None:
-            return stale[0]
-        raise AdpUnavailable(f"could not fetch ADP and no cached copy exists: {exc}") from exc
+        return stale_fallback(cache, key, exc, AdpUnavailable, "ADP")
     finally:
         if owns_client:
             client.close()
 
+    # Parse before caching. A 200 is not proof of a usable body, and writing an
+    # unparseable one would evict the last copy that *was* usable.
+    try:
+        parse_adp(response.text)
+    except AdpUnavailable as exc:
+        return stale_fallback(cache, key, exc, AdpUnavailable, "ADP")
+
     cache.set(key, response.text, ttl_seconds=TTL_SECONDS)
-    return response.text
+    return SourceResult(text=response.text)
 
 
 def parse_adp(raw: str) -> list[Player]:

@@ -118,8 +118,8 @@ def test_fetch_hits_network_once_then_serves_cache(tmp_path, raw):
     cache = Cache(tmp_path / "c.sqlite3")
     calls = []
     client = client_returning(raw, calls=calls)
-    a = fetch_crosswalk(cache, client=client)
-    b = fetch_crosswalk(cache, client=client)
+    a = fetch_crosswalk(cache, client=client).text
+    b = fetch_crosswalk(cache, client=client).text
     assert a == b == raw
     assert len(calls) == 1
 
@@ -128,7 +128,7 @@ def test_fetch_falls_back_to_stale_cache_on_failure(tmp_path, raw):
     cache = Cache(tmp_path / "c.sqlite3")
     fetch_crosswalk(cache, client=client_returning(raw))
     cache.set(CACHE_KEY, raw, ttl_seconds=-1)
-    got = fetch_crosswalk(cache, client=client_returning("", status=500))
+    got = fetch_crosswalk(cache, client=client_returning("", status=500)).text
     assert got == raw
 
 

@@ -32,6 +32,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ffcoach.cache import Cache
+from ffcoach.sources.base import SourceResult, stale_fallback
 
 SCHEDULE_URL = "https://github.com/nflverse/nflverse-data/releases/download/schedules/games.csv"
 # Flex scheduling moves kickoff times mid-season, so this cannot be cached for
@@ -62,7 +63,10 @@ class Game:
     week: int
     team: str
     opponent: str
-    kickoff: dt.datetime  # timezone-aware
+    # None when the row exists but nflverse has not published a time yet --
+    # flexed and international games carry a blank `gametime` for weeks. The
+    # game is still real; only its clock is unknown.
+    kickoff: dt.datetime | None
 
 
 class Schedule:
@@ -87,29 +91,63 @@ class Schedule:
     def bye_week(self, team: str) -> int | None:
         return self._byes.get(normalize_team(team))
 
-    def is_on_bye(self, team: str, week: int) -> bool:
+    def status(self, team: str, week: int) -> str:
+        """`"playing"` | `"bye"` | `"unknown"` -- deliberately three values.
+
+        A boolean forced two very different situations to share an answer.
+        Rows with a missing kickoff used to be dropped at parse time, after
+        which "this team has no game row" meant *bye*, and a Week 2 KC-DEN
+        game whose time was still TBD made KC read as on bye. That is a
+        data-quality gap being reported as the most certain fact this product
+        emits.
+        """
         team = normalize_team(team)
         if team not in self.teams:
-            return False
-        return (team, week) not in self._by_team_week
+            return "unknown"
+        if (team, week) in self._by_team_week:
+            return "playing"
+        # A missing row is only evidence of a bye when it is the *single*
+        # missing week. Every NFL team has exactly one. A team missing three
+        # weeks has a truncated feed, not three byes, and saying "bye" would
+        # turn a download that got cut off into three interrupt-priority
+        # alerts. Same reasoning as the TBD-kickoff case: a data gap must
+        # never be laundered into the most certain fact this product emits.
+        return "bye" if self._byes.get(team) == week else "unknown"
+
+    def is_on_bye(self, team: str, week: int) -> bool:
+        return self.status(team, week) == "bye"
 
     def kickoff(self, team: str, week: int) -> dt.datetime | None:
+        """When this team plays, or None if it does not play or the time is TBD.
+
+        Ambiguous by design's standards, so callers that care about the
+        difference ask `status()` and `kickoff_known()` instead of reading
+        None as "no game".
+        """
         game = self._by_team_week.get((normalize_team(team), week))
         return game.kickoff if game else None
+
+    def kickoff_known(self, team: str, week: int) -> bool:
+        game = self._by_team_week.get((normalize_team(team), week))
+        return game is not None and game.kickoff is not None
 
     def lock_windows(self, week: int) -> list[dt.datetime]:
         """Distinct kickoff times in a week, ascending.
 
-        Each is a separate deadline; alerts are batched per window.
+        Each is a separate deadline; alerts are batched per window. Games
+        with an unpublished time contribute nothing here -- they cannot, and
+        inventing a slot for them would create a deadline out of a blank cell.
         """
-        return sorted({g.kickoff for g in self.games if g.week == week})
+        return sorted({g.kickoff for g in self.games if g.week == week and g.kickoff})
 
 
-def fetch_schedule(season: int, cache: Cache, client: httpx.Client | None = None) -> str:
+def fetch_schedule(
+    season: int, cache: Cache, client: httpx.Client | None = None
+) -> SourceResult:
     key = _cache_key(season)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
+    hit = cache.get_with_age(key)
+    if hit is not None:
+        return SourceResult(text=hit[0], age_seconds=hit[1])
 
     owns_client = client is None
     client = client or httpx.Client(timeout=60.0, follow_redirects=True)
@@ -117,18 +155,20 @@ def fetch_schedule(season: int, cache: Cache, client: httpx.Client | None = None
         response = client.get(SCHEDULE_URL)
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        stale = cache.get_stale(key)
-        if stale is not None:
-            return stale[0]
-        raise ScheduleUnavailable(
-            f"could not fetch NFL schedule and no cached copy exists: {exc}"
-        ) from exc
+        return stale_fallback(cache, key, exc, ScheduleUnavailable, "NFL schedule")
     finally:
         if owns_client:
             client.close()
 
+    # A truncated CSV download still arrives as a 200. Parse it before it is
+    # allowed to replace a schedule we can still use.
+    try:
+        parse_schedule(response.text, season)
+    except ScheduleUnavailable as exc:
+        return stale_fallback(cache, key, exc, ScheduleUnavailable, "NFL schedule")
+
     cache.set(key, response.text, ttl_seconds=TTL_SECONDS)
-    return response.text
+    return SourceResult(text=response.text)
 
 
 def parse_schedule(raw: str, season: int) -> Schedule:
@@ -151,12 +191,19 @@ def parse_schedule(raw: str, season: int) -> Schedule:
     for row in rows:
         if row.get("season") != str(season) or row.get("game_type") != "REG":
             continue
-        kickoff = _kickoff(row.get("gameday"), row.get("gametime"))
-        if kickoff is None:
+        # A row without both teams is not a game; a row without a *time* is.
+        # Keeping the second kind is the whole point: dropping it turned a
+        # TBD kickoff into a bye week.
+        home_raw, away_raw = row.get("home_team"), row.get("away_team")
+        if not home_raw or not away_raw or not row.get("week"):
             continue
-        week = int(row["week"])
-        home = normalize_team(row["home_team"])
-        away = normalize_team(row["away_team"])
+        try:
+            week = int(row["week"])
+        except (TypeError, ValueError):
+            continue
+        kickoff = _kickoff(row.get("gameday"), row.get("gametime"))
+        home = normalize_team(home_raw)
+        away = normalize_team(away_raw)
         games.append(Game(week=week, team=home, opponent=away, kickoff=kickoff))
         games.append(Game(week=week, team=away, opponent=home, kickoff=kickoff))
 

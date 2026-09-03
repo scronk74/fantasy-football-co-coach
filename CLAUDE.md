@@ -52,15 +52,31 @@ wrong, so it has no moving parts.
 - `*_URL` constant, `TTL_SECONDS`, and either a `CACHE_KEY` constant or a `_cache_key()`
   function when the resource is parameterized
 - a module-specific `*Unavailable(Exception)`
-- a **`fetch_*` / `parse_*` split**: `fetch_*` does I/O and returns raw response text;
+- a **`fetch_*` / `parse_*` split**: `fetch_*` does I/O and returns a `SourceResult`;
   `parse_*` is pure, text in, typed objects out, and raises the module's exception with
   "parse" in the message on malformed input (tests match on that word)
 - injectable `cache` and `client: httpx.Client | None = None`, with the `owns_client`
   ownership dance and **stale-cache fallback on failure** — a failed fetch on a Sunday
   morning serves old data rather than crashing
 
+Two properties of that template are load-bearing and were both absent until 2026-08-31:
+
+- **`fetch_*` returns `SourceResult`, never bare text** (`sources/base.py`). It carries
+  `age_seconds`, `stale`, and the fetch error. Bare text made a live fetch and a week-old
+  cache indistinguishable, and both report paths then hardcoded `stale_seconds=None` — so
+  stale data was published with a current timestamp and `stale: false`. `freshest()` folds
+  several sources into one page-level age by taking the **oldest**, because a page is as
+  old as its oldest input.
+- **`fetch_*` parses before it caches.** A 200 is not proof of a usable body: an ESPN
+  session-expiry page, a captive portal, and a truncated CSV all arrive with a good status
+  code. Caching the raw body first destroyed the last known-good copy at exactly the moment
+  it was needed. On an unparseable 200 the source falls back to cache like any other
+  failure. `stale_fallback()` in `sources/base.py` is the shared implementation.
+
 `Cache` also takes an injectable clock (`now: Callable[[], float]`), which is how TTL
-expiry is tested without sleeping.
+expiry and staleness are tested without sleeping. `get_with_age()` is what sources use:
+`get()` answers "may I use this", `get_with_age()` answers "may I use this, and how old
+is it".
 
 ### Player identity is resolved before matching
 
@@ -91,6 +107,48 @@ A failed source serves stale cache and marks the payload stale. Unmatched player
 reported, never omitted. When identity is still ambiguous, `resolve()` returns
 `unresolved` rather than picking one. This is a deliberate, load-bearing property.
 
+**The recurring way it gets violated is a plausible default**, not an omission. Three
+found so far, all of which produced a clean-looking run and an unguarded lineup:
+
+- An unknown ESPN `lineupSlotId` defaulted to `"BN"`, so a starter whose slot id ESPN
+  renamed was skipped by every check.
+- An unknown `proTeamId` defaulted to `"FA"`, which matches no schedule row, so the player
+  looked like someone with nothing to worry about.
+- A schedule row with a blank kickoff time was dropped, after which "this team has no game
+  row" meant **bye** — a data-quality gap emitted as the single most certain fact the
+  product makes, at interrupt priority.
+
+The rule that came out of it: **an unusable value becomes `UNKNOWN` plus a diagnostic, and
+a diagnostic must reach somewhere a human looks** — `League.diagnostics` travels into the
+payload and onto the page, not just to the stderr of a run nobody watched. Absence is not
+evidence; only a positive signal is. `Schedule.status()` returns `playing` / `bye` /
+`unknown` for this reason, and a bye additionally requires being the team's *single*
+missing week, so a truncated feed cannot manufacture byes.
+
+### Deadlines: the kind of fix comes before the time
+
+`model/deadlines.py` returns a `FixPlan` (`BENCH_SWAP` / `WAIVER_CLAIM` /
+`ADD_BEFORE_LOCK` / `UNKNOWN`), each with a one-word verb, **not** a bare
+`(deadline, needs_waiver)` pair. The pair could describe an impossible transaction as a
+plausible one: with no bench option and waivers processing after the lock, clamping the
+deadline to the lock yields "claim someone by Thursday 8:15" for a claim that cannot
+process until Friday. A time alone cannot express "a claim is the wrong instrument". There
+is deliberately no `FREE_AGENT_ADD` kind — nothing fetches the free-agent pool, and a kind
+that can never be emitted is a promise the code does not keep.
+
+Relatedly: **a finding with no kickoff is not a finding that never locks.** Bye and
+empty-slot findings are bounded by the week's *last* kickoff, after which no addition can
+score. `actionable(findings, now)` checks the deadline, not only the `locked` flag.
+
+### Replacements are allocated across the roster, not per slot
+
+`find_replacements()` answers one slot's question well and every slot's question badly:
+run per finding it has no memory, so two OUT receivers and one healthy bench WR produced
+two cards each naming him — individually true, jointly impossible.
+`advisors/roster_plan.py` allocates once across all openings, most-constrained-first, so
+a dedicated RB slot is served before FLEX. IR is excluded from direct swaps (ESPN will not
+start a player out of an IR slot) and reported as `ir_candidates`, a prerequisite action.
+
 ### Browser layer
 
 No framework, no build step, no npm packages shipped. The split is enforced:
@@ -115,6 +173,9 @@ These come from direct user feedback and have executable assertions behind them:
    `test_report.py` and `render.test.js` assert no `$` is ever emitted.
 4. **Every recommendation states its reason inline**, in both modes. No unexplained stars
    or flags — see `advisors/draft.py::_reason`.
+5. **Status is never carried by colour alone.** The injury badge is a letter plus a
+   `title`; `league_render.test.js` asserts both. A red dot is invisible to a screen reader
+   and to roughly one man in twelve.
 
 ## Config
 
@@ -127,6 +188,13 @@ These come from direct user feedback and have executable assertions behind them:
 
 Nothing about league format may be hardcoded — scoring, roster slots, team count, and
 waiver system all come from config.
+
+**One knowing exception**, recorded rather than hidden: `_SLOT_ELIGIBILITY` in
+`advisors/lineup.py` hardcodes `FLEX = RB/WR/TE`, so superflex and IDP leagues would be
+silently wrong. The slot *names* still come from ESPN, and an unrecognized slot falls
+through to "only its own position fits" — conservative rather than fabricated. It is a
+portability defect, not a live one, and it is the first thing to fix if this repo is ever
+pointed at a second league.
 
 ## Testing
 

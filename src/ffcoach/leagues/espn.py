@@ -15,6 +15,7 @@ import json
 
 from ffcoach.leagues.base import (
     PER_PLAYER_LOCKTIME,
+    UNKNOWN,
     League,
     LineupLock,
     LockMode,
@@ -83,21 +84,46 @@ def _normalize_swid(value: str) -> str:
     return value.strip("{}").lower()
 
 
-def _parse_entry(entry: dict) -> RosterEntry:
+def _parse_entry(entry: dict, notes: list[str]) -> RosterEntry:
     player = entry.get("playerPoolEntry", {}).get("player", {})
+    name = player.get("fullName", "")
+
+    # An unrecognized id becomes UNKNOWN and says so, rather than falling back
+    # to a plausible default. The defaults it used to have were the two worst
+    # available: an unknown slot became "BN", so a real starter ESPN had
+    # renamed the slot id for would be skipped by every check; and an unknown
+    # pro team became "FA", so he would match no schedule row and look like
+    # someone with nothing to worry about. Both produce a clean run and a
+    # silently unguarded lineup.
+    slot_id = entry.get("lineupSlotId")
+    slot = _SLOT_IDS.get(slot_id) if isinstance(slot_id, int) else None
+    if slot is None:
+        notes.append(f"unrecognized lineupSlotId {slot_id!r} for {name or 'a player'}")
+        slot = UNKNOWN
+
+    team_id = player.get("proTeamId")
+    nfl_team = _PRO_TEAM_ABBREVIATIONS.get(team_id) if isinstance(team_id, int) else None
+    if nfl_team is None:
+        notes.append(f"unrecognized proTeamId {team_id!r} for {name or 'a player'}")
+        nfl_team = UNKNOWN
+
+    position = _POSITION_IDS.get(player.get("defaultPositionId"), UNKNOWN)
+
     # ESPN reports availability as injuryStatus (ACTIVE/QUESTIONABLE/OUT/
     # INJURY_RESERVE) and separately as an `injured` boolean. The string is the
     # useful one; the boolean cannot distinguish "questionable" from "out".
     return RosterEntry(
-        player_name=player.get("fullName", ""),
-        position=_POSITION_IDS.get(player.get("defaultPositionId"), "UNKNOWN"),
-        nfl_team=_PRO_TEAM_ABBREVIATIONS.get(player.get("proTeamId"), "FA"),
-        lineup_slot=_SLOT_IDS.get(entry.get("lineupSlotId"), "BN"),
+        player_name=name,
+        position=position,
+        nfl_team=nfl_team,
+        lineup_slot=slot,
         injury_status=player.get("injuryStatus"),
     )
 
 
-def _parse_team(row: dict, member_names: dict[str, str], my_swid: str | None) -> Team:
+def _parse_team(
+    row: dict, member_names: dict[str, str], my_swid: str | None, notes: list[str]
+) -> Team:
     overall = row.get("record", {}).get("overall", {})
     owner_ids = [_normalize_swid(o) for o in row.get("owners", [])]
     owner_display = ", ".join(member_names.get(oid, oid) for oid in owner_ids) or "Unknown"
@@ -113,7 +139,11 @@ def _parse_team(row: dict, member_names: dict[str, str], my_swid: str | None) ->
         ties=int(overall.get("ties", 0)),
         points_for=float(overall.get("pointsFor", 0.0)),
         points_against=float(overall.get("pointsAgainst", 0.0)),
-        roster=tuple(_parse_entry(e) for e in row.get("roster", {}).get("entries", [])),
+        roster=tuple(
+            _parse_entry(e, notes)
+            for e in row.get("roster", {}).get("entries", [])
+            if isinstance(e, dict)
+        ),
         is_user_team=is_user_team,
     )
 
@@ -131,23 +161,52 @@ def parse_league(raw: str, my_swid: str | None = None) -> League:
     except json.JSONDecodeError as exc:
         raise EspnUnavailable(f"could not parse ESPN league response: {exc}") from exc
 
+    # Shape, not just syntax. Valid JSON of the wrong shape used to escape as a
+    # bare AttributeError or ValueError -- a stack trace instead of the
+    # module's own exception, so no caller's `except EspnUnavailable` could
+    # catch it and no stale fallback could run. Confirmed reachable with a
+    # top-level list, `settings: []`, and `wins: "oops"`.
+    _require(isinstance(payload, dict), "top level is not an object")
+    _require(isinstance(payload.get("settings", {}), dict), "settings is not an object")
+    _require(isinstance(payload.get("teams", []), list), "teams is not a list")
+    _require(isinstance(payload.get("members", []), list), "members is not a list")
+
+    notes: list[str] = []
     member_names = {
         _normalize_swid(m["id"]): m.get("displayName", "")
         for m in payload.get("members", [])
-        if m.get("id")
+        if isinstance(m, dict) and m.get("id")
     }
+
+    try:
+        teams = tuple(
+            _parse_team(row, member_names, my_swid, notes)
+            for row in payload.get("teams", [])
+            if isinstance(row, dict)
+        )
+        season = int(payload.get("seasonId", 0))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise EspnUnavailable(f"could not parse ESPN league: unexpected shape: {exc}") from exc
+
+    waivers, waiver_note = _parse_waivers(payload)
+    if waiver_note:
+        notes.append(waiver_note)
 
     return League(
         name=str(payload.get("settings", {}).get("name", "")),
-        season=int(payload.get("seasonId", 0)),
-        teams=tuple(
-            _parse_team(row, member_names, my_swid) for row in payload.get("teams", [])
-        ),
+        season=season,
+        teams=teams,
         roster_slots=_parse_roster_slots(payload),
         current_week=_parse_current_week(payload),
-        waivers=_parse_waivers(payload),
+        waivers=waivers,
         lineup_lock=_parse_lineup_lock(payload),
+        diagnostics=tuple(notes),
     )
+
+
+def _require(ok: bool, what: str) -> None:
+    if not ok:
+        raise EspnUnavailable(f"could not parse ESPN league: {what}")
 
 
 def _parse_lineup_lock(payload: dict) -> LineupLock:
@@ -160,7 +219,8 @@ def _parse_lineup_lock(payload: dict) -> LineupLock:
     evidence at all -- so it falls back to ESPN's default and says so. That
     asymmetry is deliberate.
     """
-    raw = payload.get("settings", {}).get("rosterSettings", {}).get("lineupLocktimeType")
+    roster_settings = payload.get("settings", {}).get("rosterSettings")
+    raw = roster_settings.get("lineupLocktimeType") if isinstance(roster_settings, dict) else None
     if raw is None:
         return LineupLock(mode=LockMode.PER_PLAYER, raw=None, assumed=True)
     text = str(raw).strip().upper()
@@ -169,17 +229,42 @@ def _parse_lineup_lock(payload: dict) -> LineupLock:
     return LineupLock(mode=LockMode.WEEKLY, raw=str(raw), unrecognized=True)
 
 
-def _parse_waivers(payload: dict) -> WaiverSettings:
-    a = payload.get("settings", {}).get("acquisitionSettings") or {}
-    days = a.get("waiverProcessDays") or []
+def _parse_waivers(payload: dict) -> tuple[WaiverSettings, str | None]:
+    """Waiver schedule, plus a note when it had to be discarded.
+
+    An out-of-range hour is treated as *unknown*, not clamped. Hour 25 used to
+    survive parsing and then blow up building a datetime much later, and a
+    clamp to 23 would be worse still: it would produce a confident deadline
+    from a value we know is wrong. Returning unknown makes the deadline None,
+    which every caller already handles as "a claim is needed but not by when".
+    """
+    a = payload.get("settings", {}).get("acquisitionSettings")
+    if not isinstance(a, dict):
+        return WaiverSettings(), None
+
+    days = a.get("waiverProcessDays")
+    days = days if isinstance(days, list) else []
+
     try:
         hour = int(a.get("waiverProcessHour", 0))
     except (TypeError, ValueError):
-        hour = 0
-    return WaiverSettings(
-        process_days=tuple(str(d).upper() for d in days),
-        process_hour=hour,
-        uses_budget=bool(a.get("isUsingAcquisitionBudget")),
+        return WaiverSettings(), (
+            f"unusable waiverProcessHour {a.get('waiverProcessHour')!r}; "
+            "waiver deadlines will read as unknown"
+        )
+    if not 0 <= hour <= 23:
+        return WaiverSettings(), (
+            f"waiverProcessHour {hour} is outside 0-23; "
+            "waiver deadlines will read as unknown"
+        )
+
+    return (
+        WaiverSettings(
+            process_days=tuple(str(d).upper() for d in days),
+            process_hour=hour,
+            uses_budget=bool(a.get("isUsingAcquisitionBudget")),
+        ),
+        None,
     )
 
 
@@ -190,10 +275,10 @@ def _parse_roster_slots(payload: dict) -> dict[str, int]:
     most with a count of zero. Only non-zero, recognized slots are kept -- the
     zeros are slots this league does not use.
     """
-    counts = (
-        payload.get("settings", {}).get("rosterSettings", {}).get("lineupSlotCounts")
-        or {}
-    )
+    roster_settings = payload.get("settings", {}).get("rosterSettings")
+    counts = roster_settings.get("lineupSlotCounts") if isinstance(roster_settings, dict) else None
+    if not isinstance(counts, dict):
+        return {}
     out: dict[str, int] = {}
     for slot_id, count in counts.items():
         try:
@@ -208,9 +293,10 @@ def _parse_roster_slots(payload: dict) -> dict[str, int]:
 
 def _parse_current_week(payload: dict) -> int | None:
     """ESPN's own week number, preferred over anything we could derive."""
+    status = payload.get("status")
     for value in (
         payload.get("scoringPeriodId"),
-        payload.get("status", {}).get("currentMatchupPeriod"),
+        status.get("currentMatchupPeriod") if isinstance(status, dict) else None,
     ):
         try:
             week = int(value)

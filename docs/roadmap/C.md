@@ -6,9 +6,13 @@
 **Stage goal:** the advisor correctly identifies every starter who cannot score this week, knows which
 week it is, and knows the real deadline for fixing each problem.
 
-**Status: complete (5/5), 2026-08-30.** [R-1](../../ROADMAP.md#7-roadblocks) still gates *live
+**Status: 6/7 done, 2026-08-31.** [R-1](../../ROADMAP.md#7-roadblocks) still gates *live
 verification* — every module here is proven against fixtures, not against a real ESPN league — but no
 step in the stage turned out to require the invite to build.
+
+C6 was added by the [2026-08-31 end-to-end review](../end-to-end-review-2026-08-31.md), which found
+that C4 and C5 had each fixed a symptom rather than its cause. C7 is the composition step that review
+also found missing: the advisor this stage built has no production caller.
 
 ---
 
@@ -131,15 +135,77 @@ is deliberate: a present-but-unfamiliar value is evidence the league chose the n
 absence is no evidence at all, so it falls back to the default and says so. Unrecognized also fails
 toward the **earlier** deadline, which alerts too soon rather than too late.
 
-### Defect found and fixed here (predates C5)
+### Defect found and fixed here (predates C5) — and the fix was wrong
 
 A deadline could land *after* the lock — a waiver run processing Friday advertised as the fix for a
 slot that froze Thursday, which reads as "you still have time" at exactly the moment you have none.
-`fix_deadline` now clamps to the lock. This was live in C4 under per-player locking too, not only
-under the weekly rule; the weekly demonstration is just what made it visible.
+`fix_deadline` was made to clamp to the lock. This was live in C4 under per-player locking too, not
+only under the weekly rule; the weekly demonstration is just what made it visible.
+
+**The clamp was not the fix.** The 2026-08-31 review is right that it repaired the number and left
+the advice false: `min(waiver, lock)` still returned `needs_waiver=True`, so the message became
+"claim someone by Thursday 8:15" for a claim that cannot process until Friday. A plausible time
+attached to an impossible action is arguably worse than an obviously wrong one, because it survives
+inspection. Corrected in [C6](#c6--truth-repairs-from-the-2026-08-31-review--done-2026-08-31) by
+`FixPlan`, which names the *kind* of action before its deadline (D-046).
 
 `kickoff` and `locks_at` are kept as separate fields on `LineupFinding`: under a weekly lock they are
 different facts — when he plays, versus when you lose the ability to bench him.
 
 **Still wants R-1** to confirm the weekly value's actual spelling, but only to move it from the
 `unrecognized` branch to a recognized one. Behavior is already correct either way.
+
+---
+
+## C6 — Truth repairs from the 2026-08-31 review ✅ Done *(2026-08-31)*
+
+Six confirmed defects, four of them the same shape: **a plausible default standing in for a value we
+did not actually have.** None would have been caught by the tests as written, and four produced a
+clean-looking run rather than an error.
+
+- [x] **C6.1** — `SourceResult`: freshness travels with the data; `freshest()` folds sources by
+      taking the oldest. Both report paths had hardcoded `stale_seconds=None` (D-044).
+- [x] **C6.2** — Parse before caching, in all five sources. An ESPN session-expiry page arrives as a
+      200 and used to evict the roster we could still have fallen back on (D-044).
+- [x] **C6.3** — `FixPlan` replaces `(deadline, needs_waiver)`; a claim that cannot land is not
+      offered as a claim (D-046). Supersedes C5's clamp.
+- [x] **C6.4** — Bye and empty-slot findings are bounded by the week's last kickoff. "No kickoff"
+      had been read as "never locks", so a Week 5 empty slot was still actionable in January.
+      `actionable()` now takes `now`.
+- [x] **C6.5** — `advisors/roster_plan.py`: one bench player is allocated to one opening. IR is a
+      prerequisite, not a swap (D-045).
+- [x] **C6.6** — `Schedule.status()` tri-state; a bye requires being the *single* missing week
+      (D-048).
+- [x] **C6.7** — ESPN shape validation; unknown slot/team ids become `UNKNOWN` with a diagnostic
+      rather than `BN`/`FA`; an out-of-range waiver hour is discarded rather than clamped (D-047).
+- [x] **C6.8** — Injury status reaches the page; freshness and diagnostics are displayed; the draft
+      table scrolls on a phone.
+
+**Outcome:** 356 Python tests (was 295), 53 JS (was 38). Fixture demo at Jan 1 for Week 5: **6
+findings, 0 actionable.** Before, all six read as still fixable.
+
+Full reply to the review, including what was challenged and what it missed:
+[`docs/review-reply-2026-08-31.md`](../review-reply-2026-08-31.md).
+
+---
+
+## C7 — `CheckResult` + `ffcoach check --dry-run` · Next
+
+The review's most damning finding: `find_problems()` appears exactly once under `src/`, at its own
+definition. `ffcoach league` parses ESPN, resolves the week, and writes a roster page — it never
+loads the schedule, computes the waiver deadline, picks the user's team, or calls the advisor.
+Stage C's work is real and tested and **nothing runs it**.
+
+That also means there is no place for orchestration to live, so building D1 first would hide it
+inside a delivery module.
+
+- [ ] **C7.1** — `CheckResult`: source health (per-source age + stale), week provenance, the one
+      user team, findings with fix plans, next lock, and an explicit all-clear state.
+- [ ] **C7.2** — `ffcoach check --fixture … --now … --dry-run`, so the whole safety decision is
+      exercisable offline with no cookies.
+- [ ] **C7.3** — Exactly-one-user-team selection, with a clear error when zero or several match.
+- [ ] **C7.4** — Tests: end-to-end fixture check; a clean week produces an all-clear rather than
+      silence.
+
+**Deliberately not in C7:** the Week page. It consumes `CheckResult` (F1) and belongs to Stage F.
+Building the object first is the part of the review's resequencing the evidence supports.

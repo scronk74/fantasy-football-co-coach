@@ -2,6 +2,7 @@
 // tested. Mirrors main.js's structure.
 import { leagueHtml } from "./league_render.js";
 import { navHtml } from "./nav.js";
+import { escapeHtml, freshnessText } from "./render.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -15,8 +16,19 @@ async function load() {
 
     $("league-name").textContent = `${payload.league.name} — Teams`;
     const bits = [`${payload.teams.length} teams`];
-    if (payload.stale) bits.push("data is stale — run ffcoach league");
+    const freshness = freshnessText(payload, "ffcoach league");
+    if (freshness) bits.push(freshness);
     $("status").textContent = bits.join(" · ");
+    $("status").classList.toggle("stale", Boolean(payload.stale));
+
+    // Anything the ESPN adapter could not interpret. Shown on the page, not
+    // just on the stderr of a run nobody watched.
+    const notes = payload.diagnostics ?? [];
+    $("diagnostics").innerHTML = notes.length
+      ? `<p class="warn">ESPN data we could not read: ${notes
+          .map((n) => escapeHtml(n))
+          .join("; ")}</p>`
+      : "";
 
     $("teams").innerHTML = leagueHtml(payload.teams);
   } catch (error) {

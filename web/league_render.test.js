@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { leagueHtml, rosterHtml, rosterRowHtml, teamCardHtml } from "./league_render.js";
+import {
+  injuryBadgeHtml,
+  leagueHtml,
+  rosterHtml,
+  rosterRowHtml,
+  teamCardHtml,
+} from "./league_render.js";
 
 const ENTRY = (over = {}) => ({
   player_name: "Bijan Robinson",
@@ -95,4 +101,50 @@ test("leagueHtml puts the user's team first", () => {
 
 test("leagueHtml handles no teams", () => {
   assert.match(leagueHtml([]), /no teams/i);
+});
+
+// --- injury status (it was in the payload and thrown away) ---
+
+test("injuryBadgeHtml says nothing for a healthy player", () => {
+  assert.equal(injuryBadgeHtml(null), "");
+  assert.equal(injuryBadgeHtml("ACTIVE"), "");
+  assert.equal(injuryBadgeHtml(""), "");
+});
+
+test("injuryBadgeHtml labels questionable and out differently", () => {
+  assert.match(injuryBadgeHtml("QUESTIONABLE"), /\bQ\b/);
+  assert.match(injuryBadgeHtml("OUT"), /OUT/);
+  assert.match(injuryBadgeHtml("INJURY_RESERVE"), /IR/);
+});
+
+test("a certain-out status is marked more severely than a doubtful one", () => {
+  assert.match(injuryBadgeHtml("OUT"), /injury out/);
+  assert.match(injuryBadgeHtml("QUESTIONABLE"), /injury doubt/);
+});
+
+test("injury status is never conveyed by colour alone", () => {
+  // A red dot is invisible to a screen reader. The letters and the title
+  // attribute are what actually carry the meaning.
+  const html = injuryBadgeHtml("QUESTIONABLE");
+  assert.match(html, /title="questionable"/);
+  assert.match(html, />Q</);
+});
+
+test("an unrecognized status is left blank rather than guessed at", () => {
+  assert.equal(injuryBadgeHtml("SOMETHING_NEW"), "");
+});
+
+test("a roster row surfaces the status it was given", () => {
+  const html = rosterRowHtml(ENTRY({ injury_status: "QUESTIONABLE" }));
+  assert.match(html, />Q</);
+});
+
+test("a roster row with no status still renders the cell", () => {
+  const html = rosterRowHtml(ENTRY({ injury_status: null }));
+  assert.match(html, /class="status"/);
+});
+
+test("the empty-roster row spans every column", () => {
+  const columns = (rosterRowHtml(ENTRY()).match(/<td/g) || []).length;
+  assert.match(rosterHtml([]), new RegExp(`colspan="${columns}"`));
 });

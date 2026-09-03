@@ -79,8 +79,8 @@ def test_fetch_hits_network_once_then_serves_cache(tmp_path, raw):
     cache = Cache(tmp_path / "c.sqlite3")
     calls = []
     client = client_returning(raw, calls=calls)
-    a = fetch_adp("ppr", 12, 2026, cache, client=client)
-    b = fetch_adp("ppr", 12, 2026, cache, client=client)
+    a = fetch_adp("ppr", 12, 2026, cache, client=client).text
+    b = fetch_adp("ppr", 12, 2026, cache, client=client).text
     assert a == b == raw
     assert len(calls) == 1
 
@@ -100,7 +100,7 @@ def test_fetch_falls_back_to_stale_cache_on_failure(tmp_path, raw):
     fetch_adp("ppr", 12, 2026, cache, client=client_returning(raw))
     # Force expiry, then fail the network.
     cache.set(_cache_key("ppr", 12, 2026), raw, ttl_seconds=-1)
-    got = fetch_adp("ppr", 12, 2026, cache, client=client_returning("", status=500))
+    got = fetch_adp("ppr", 12, 2026, cache, client=client_returning("", status=500)).text
     assert got == raw
 
 

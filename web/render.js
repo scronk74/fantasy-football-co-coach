@@ -23,6 +23,36 @@ export function playerId(player) {
   return `${player.name}|${player.position}`;
 }
 
+// Rounded on purpose. "3h" is honest about being approximate; "2.83h" claims a
+// precision the number does not have.
+export function ageText(seconds) {
+  if (seconds == null) return "";
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return "";
+  if (n < 90) return `${Math.round(n)}s`;
+  if (n < 90 * 60) return `${Math.round(n / 60)}m`;
+  if (n < 48 * 3600) return `${Math.round(n / 3600)}h`;
+  return `${Math.round(n / 86400)}d`;
+}
+
+// How old the data is, and whether serving it was a fallback. These are two
+// different facts: the payload used to carry only `stale`, computed from
+// whether an age happened to be present, so a live fetch and a week-old cache
+// were indistinguishable on the page. `command` is what the user would run to
+// refresh, named so the page never says "stale" without saying what to do.
+export function freshnessText(payload, command) {
+  // Age zero means the fetch was live, and "data 0s old" is noise on a line
+  // whose job is to flag the exceptions.
+  const seconds = payload?.age_seconds;
+  const age = Number(seconds) > 0 ? ageText(seconds) : "";
+  if (payload?.stale) {
+    return age
+      ? `stale — showing data from ${age} ago; run ${command}`
+      : `stale — the last fetch failed; run ${command}`;
+  }
+  return age ? `data ${age} old` : "";
+}
+
 export function formatValue(value) {
   const n = Number(value);
   const sign = n > 0 ? "+" : n < 0 ? "-" : "";

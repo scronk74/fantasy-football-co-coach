@@ -11,7 +11,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-BENCH_SLOTS = ("BN", "IR")
+IR_SLOT = "IR"
+BENCH_SLOTS = ("BN", IR_SLOT)
+
+# What a roster entry's slot or pro team becomes when ESPN sends an id we do
+# not recognize. Never "BN" and never "FA": defaulting an unknown slot to bench
+# hides a real starter from every check, and defaulting an unknown pro team to
+# free agent makes him look like someone with no game. Both are false silence,
+# which is the one failure mode this product cannot tolerate. UNKNOWN is not a
+# bench slot, so an unknown-slot player is still evaluated as a starter, and it
+# matches no schedule row, so his lock time reads as unknown rather than absent.
+UNKNOWN = "UNKNOWN"
 
 
 # Statuses that guarantee a zero. QUESTIONABLE and DOUBTFUL are deliberately
@@ -152,6 +162,11 @@ class League:
     current_week: int | None = None
     waivers: WaiverSettings = WaiverSettings()
     lineup_lock: LineupLock = LineupLock()
+    # Things the adapter could not interpret: an unrecognized lineup slot id, a
+    # pro team we have no abbreviation for, a waiver hour outside 0-23. Carried
+    # on the model rather than logged at the parse site so they survive into the
+    # payload and the CLI, where someone will actually see them.
+    diagnostics: tuple[str, ...] = ()
 
     @property
     def starting_slots(self) -> dict[str, int]:
