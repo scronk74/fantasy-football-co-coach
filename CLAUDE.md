@@ -2,6 +2,24 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## What this project is for
+
+**In-season alerting that prevents missed points.** One ESPN league, one user. The
+value is: a starter is on bye, is OUT, or a slot is empty — and you find out while you
+can still fix it.
+
+**The draft board is legacy scaffolding, not the product.** `web/index.html`,
+`advisors/draft.py`, `model/value.py`, `model/tiers.py` and `sources/ffcalc.py` were
+built while the league invite was outstanding, because they were the only thing
+buildable without a league. On 2026-09-03 the user said, unprompted: *"I do not need
+this application to help me with the draft in any way."* That code stays (deleting it
+is a third of the test suite) but it earns no new features, and **"Phase 1 complete"
+in the planning docs does not mean the valuable half is done** — as of 2026-09-03
+`advisors/lineup.py` is 543 tested lines with no production caller at all.
+
+If you are picking up work here, the critical path is `ffcoach check` → a notifier →
+the Week page. See `ROADMAP.md` §1, D-050, and R-4.
+
 ## Commands
 
 ```bash
@@ -200,6 +218,22 @@ These come from direct user feedback and have executable assertions behind them:
 Nothing about league format may be hardcoded — scoring, roster slots, team count, and
 waiver system all come from config.
 
+**The live league, read from ESPN on 2026-09-03** (league `1076479097`). Recorded here
+because every fixture and every default should be checked against it, not against a
+guess:
+
+| | |
+|---|---|
+| Teams / scoring | 12 · full PPR (`scoringItems` statId 53 = 1.0), H2H points |
+| Starters | QB 1 · RB 2 · WR 2 · TE 1 · FLEX 1 · K 1 · DEF 1 |
+| Bench | BN 7 · **IR 1** (`config.py`'s `VALID_SLOTS` has no IR — nothing is drafted into it) |
+| Waivers | Priority, **no budget**. Processes **six days a week at 11:00** — every day but Tuesday. 24h claim window |
+| Lineup lock | `INDIVIDUAL_GAME` → per-player, at each player's kickoff |
+
+`my_pick` in `league.yaml` fed only the legacy draft board, and ESPN cannot supply it
+anyway: `draftSettings.orderType` is `DRAFT_START`, so the order is drawn when the draft
+opens and the published `pickOrder` is the identity list `[1..12]`, a placeholder.
+
 **One knowing exception**, recorded rather than hidden: `_SLOT_ELIGIBILITY` in
 `advisors/lineup.py` hardcodes `FLEX = RB/WR/TE`, so superflex and IDP leagues would be
 silently wrong. The slot *names* still come from ESPN, and an unrecognized slot falls
@@ -213,10 +247,13 @@ Every module ships with tests, including browser code. Sources are tested agains
 fixtures with a mocked `httpx.MockTransport`, so the suite is deterministic and offline.
 See the `client_returning()` helper duplicated across source tests.
 
-`tests/fixtures/espn_league.json` is **hand-built and unverified against a live ESPN
-league** — the league invite has not arrived. Tests passing proves the parser is internally
-consistent, not that it matches ESPN. Its header comment says so; replace it with a real
-cookie-scrubbed capture when possible.
+`tests/fixtures/espn_league.json` is **hand-built**, but as of 2026-09-03 the parser it
+exercises is no longer unverified: `ffcoach league` ran against the real league and
+returned 12 teams with **zero diagnostics**, so the field names guessed from community
+docs match live ESPN. The fixture is still only two teams and still proves internal
+consistency rather than fidelity — replacing it with a real cookie-scrubbed capture is
+worth doing, and **`SWID` is both the owner id in `members[]` and half the auth pair**,
+so any capture tool must scrub member ids, not just display names.
 
 ## Workflow
 
