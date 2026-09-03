@@ -1,42 +1,21 @@
 import pytest
 
-from ffcoach.model.value import (
-    availability,
-    availability_text,
-    verdict,
-    verdict_text,
-)
+from ffcoach.model.value import availability, availability_text
 
 
-def test_falling_past_adp_is_a_bargain():
-    # Ranked 5th but the market takes him around 20 -> he is falling to you.
-    assert verdict(rank=5, adp=20.0) == "bargain"
+def test_no_bargain_or_reach_verdict_is_offered():
+    """The board may not claim value it cannot compute.
 
+    `rank` came from sorting by ADP, so `adp - rank` compared an ADP-derived
+    rank against ADP itself. It measured the gap between a continuous scale
+    and a dense integer index -- growing with depth, so a deep DEF at ADP 196
+    on row 271 was labelled "reach". Grading market price needs an
+    independent ranking, and this project has no projection model.
+    """
+    import ffcoach.model.value as value
 
-def test_going_near_adp_is_fair():
-    assert verdict(rank=10, adp=11.0) == "fair"
-    assert verdict(rank=10, adp=5.0) == "fair"
-
-
-def test_taking_someone_early_is_a_reach():
-    assert verdict(rank=30, adp=10.0) == "reach"
-
-
-def test_threshold_is_configurable():
-    assert verdict(rank=10, adp=17.0, threshold=6.0) == "bargain"
-    assert verdict(rank=10, adp=17.0, threshold=20.0) == "fair"
-
-
-def test_verdict_text_is_plain_language_and_mentions_no_money():
-    for v in ("bargain", "fair", "reach"):
-        text = verdict_text(v)
-        assert text and text[0].isupper()
-        assert "$" not in text
-
-
-def test_verdict_text_rejects_unknown_verdict():
-    with pytest.raises(ValueError, match="unknown verdict"):
-        verdict_text("amazing")
+    for gone in ("verdict", "verdict_text", "VERDICT_TEXT"):
+        assert not hasattr(value, gone), f"{gone} is back; it cannot be computed honestly"
 
 
 def test_player_well_past_his_adp_is_gone():
@@ -66,3 +45,8 @@ def test_zero_stdev_does_not_divide_by_zero():
 
 def test_availability_text_names_the_pick_number():
     assert "31" in availability_text("likely", pick=31)
+
+
+def test_availability_text_rejects_an_unknown_bucket():
+    with pytest.raises(ValueError, match="unknown availability"):
+        availability_text("amazing", pick=31)

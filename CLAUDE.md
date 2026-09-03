@@ -172,7 +172,12 @@ These come from direct user feedback and have executable assertions behind them:
 3. **No dollar figures.** The league uses waiver priority, not a bidding budget. Both
    `test_report.py` and `render.test.js` assert no `$` is ever emitted.
 4. **Every recommendation states its reason inline**, in both modes. No unexplained stars
-   or flags — see `advisors/draft.py::_reason`.
+   or flags — see `advisors/draft.py::_reason`. Each clause must trace to something
+   *computed*: the board carries no bargain/reach verdict, because `rank` is the ADP sort
+   order, so `adp - rank` graded ADP against itself and drifted with list depth (a DEF at
+   ADP 196 on row 271 read "reach"). Grading market price needs an independent ranking,
+   and there is no projection model. `availability` — a normal CDF over FFC's `stdev` —
+   stays, because it is real.
 5. **Status is never carried by colour alone.** The injury badge is a letter plus a
    `title`; `league_render.test.js` asserts both. A red dot is invisible to a screen reader
    and to roughly one man in twelve.

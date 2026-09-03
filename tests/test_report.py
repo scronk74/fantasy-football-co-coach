@@ -50,8 +50,8 @@ def test_payload_never_contains_a_dollar_figure():
 
 def test_every_row_has_the_documented_keys():
     expected = {
-        "rank", "name", "position", "team", "adp", "stdev", "bye", "value",
-        "verdict", "verdict_text", "availability", "availability_text",
+        "rank", "name", "position", "team", "adp", "stdev", "bye",
+        "availability", "availability_text",
         "tier", "tier_break_after", "injury_status", "reason",
     }
     for row in payload()["players"]:

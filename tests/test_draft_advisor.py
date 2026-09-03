@@ -44,18 +44,16 @@ def test_rows_are_sorted_by_adp():
     assert [r.name for r in board] == ["a", "b"]
 
 
-def test_value_is_adp_minus_rank():
+def test_no_row_carries_a_value_or_verdict():
+    """A row states ADP and availability; it does not grade the price.
+
+    `value` was `adp - rank` where `rank` was the index of the ADP sort, so
+    the number was an artifact of list depth, not an opinion about the
+    player. See test_value.py::test_no_bargain_or_reach_verdict_is_offered.
+    """
     board = build_board([player("a", 5.0), player("b", 9.0)], cfg())
-    assert board[0].value == 4.0
-    assert board[1].value == 7.0
-
-
-def test_every_row_carries_a_verdict_and_its_text():
-    board = build_board([player("a", 1.0), player("b", 40.0)], cfg())
-    for row in board:
-        assert row.verdict in ("bargain", "fair", "reach")
-        assert row.verdict_text
-        assert "$" not in row.verdict_text
+    fields = set(vars(board[0]))
+    assert not fields & {"value", "verdict", "verdict_text"}
 
 
 def test_every_row_carries_availability_text_naming_next_pick():
@@ -76,12 +74,17 @@ def test_last_row_never_flags_a_tier_break():
     assert board[-1].tier_break_after is False
 
 
-def test_non_neutral_verdicts_get_a_reason():
-    board = build_board([player("a", 40.0), player("b", 41.0)], cfg())
-    bargains = [r for r in board if r.verdict == "bargain"]
-    assert bargains
-    for row in bargains:
-        assert row.reason
+def test_a_row_that_is_gone_by_your_next_pick_states_that_as_its_reason():
+    """UX rule 4: nothing is highlighted without saying why, in either mode."""
+    board = build_board([player("a", 1.0, stdev=1.0)], cfg(my_pick=7))
+    row = board[0]
+    assert row.availability == "gone"
+    assert "next pick" in row.reason
+
+
+def test_a_row_with_nothing_to_flag_carries_no_reason():
+    board = build_board([player("a", 400.0, stdev=1.0)], cfg(my_pick=7))
+    assert board[0].reason == ""
 
 
 def test_injury_status_is_carried_through():

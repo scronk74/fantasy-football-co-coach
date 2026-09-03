@@ -6,7 +6,6 @@ import {
   bestAvailable,
   freshnessText,
   boardHtml,
-  formatValue,
   playerId,
   positionClass,
   rowHtml,
@@ -21,9 +20,6 @@ const P = (over = {}) => ({
   adp: 1.7,
   stdev: 0.8,
   bye: 11,
-  value: 0.7,
-  verdict: "fair",
-  verdict_text: "He is going right about where he normally goes.",
   availability: "gone",
   availability_text: "Almost certainly drafted before pick 18.",
   tier: 1,
@@ -33,10 +29,12 @@ const P = (over = {}) => ({
   ...over,
 });
 
-test("formatValue always shows a sign and one decimal", () => {
-  assert.equal(formatValue(4), "+4.0");
-  assert.equal(formatValue(-2.25), "-2.3");
-  assert.equal(formatValue(0), "0.0");
+test("the board renders no value or verdict column", () => {
+  // `value` was `adp - rank` against an ADP-derived rank -- an artifact of
+  // list depth, not a judgment. The column and its bargain/reach colouring
+  // are gone; ADP and availability are what the board actually computes.
+  const html = rowHtml(P({ value: 99.9, verdict: "bargain" }), { explain: true });
+  assert.doesNotMatch(html, /99\.9|bargain|reach/);
 });
 
 test("positionClass maps position to a class", () => {
@@ -113,13 +111,13 @@ test("rowHtml never renames ADP away", () => {
 });
 
 test("rowHtml shows the reason in both modes", () => {
-  const p = P({ verdict: "bargain", reason: "Falling past his usual draft slot." });
-  assert.match(rowHtml(p, { explain: false }), /Falling past his usual draft slot/);
-  assert.match(rowHtml(p, { explain: true }), /Falling past his usual draft slot/);
+  const p = P({ reason: "Unlikely to last to your next pick." });
+  assert.match(rowHtml(p, { explain: false }), /Unlikely to last to your next pick/);
+  assert.match(rowHtml(p, { explain: true }), /Unlikely to last to your next pick/);
 });
 
-test("explain mode adds the verdict explanation, plain mode does not", () => {
-  const p = P({ verdict_text: "EXPLAIN ME" });
+test("explain mode adds the availability explanation, plain mode does not", () => {
+  const p = P({ availability_text: "EXPLAIN ME" });
   assert.doesNotMatch(rowHtml(p, { explain: false }), /EXPLAIN ME/);
   assert.match(rowHtml(p, { explain: true }), /EXPLAIN ME/);
 });
@@ -135,7 +133,7 @@ test("rowHtml escapes html in player names", () => {
 });
 
 test("rowHtml never emits a dollar sign", () => {
-  assert.doesNotMatch(rowHtml(P({ verdict: "bargain" }), { explain: true }), /\$/);
+  assert.doesNotMatch(rowHtml(P(), { explain: true }), /\$/);
 });
 
 test("boardHtml inserts a tier break row after a flagged player", () => {
