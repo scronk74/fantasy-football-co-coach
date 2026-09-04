@@ -49,11 +49,13 @@ from ffcoach.model.deadlines import next_waiver_deadline
 from ffcoach.model.week import WeekResolution
 from ffcoach.sources.schedule import Schedule
 
-# ESPN publishes `waiverProcessHour` as a bare integer and never says in which
-# timezone. Eastern is the right guess for an NFL league and is what the quiet-
-# hours rule already assumes, but it *is* a guess: wrong by three hours it
-# shifts a claim deadline by three hours. Injectable so a future config key can
-# replace it without touching this logic.
+# Fallback only. The league's real clock comes from `league.yaml` (D-065): ESPN
+# publishes `waiverProcessHour` as a bare integer and **no timezone field
+# anywhere** -- the whole payload was searched to confirm it -- so 11:00 Eastern
+# and 11:00 Pacific are both plausible readings of the same number, three hours
+# apart, on a deadline this tool states as fact. When the config cannot be read
+# the caller records a blind spot rather than letting the assumption pass as
+# knowledge.
 LEAGUE_TZ = ZoneInfo("America/New_York")
 
 

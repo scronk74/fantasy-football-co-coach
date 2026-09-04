@@ -23,7 +23,7 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 562 Python + 53 JS, all green · CI gates both on every PR |
+| **Tests** | 571 Python + 53 JS, all green · CI gates both on every PR |
 | **Phase** | **C 7/7, D 3/5, E 3/6.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. Next is F1 (the Week page, once the draft fills a roster) and D4 (per-alert control) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
@@ -333,6 +333,8 @@ flowchart LR
 
 - **D-064 — A fixed interval, not a schedule derived from kickoffs.** ✅ *(2026-09-04)*. D-009 times alerts off per-player kickoffs, which suggests generating `StartCalendarInterval` entries from the NFL schedule. Rejected: a plist that must be regenerated whenever a game is flexed is a plist that will be stale exactly when it matters, and the failure is silent. A flat `StartInterval` of 30 minutes is denser than the three-hour last-call window (D-060) so no reminder is ever late, and sparse enough that a season is ~10k requests to an unofficial API rather than ~300k. Bounds are enforced at 5–240 minutes with the reasoning in the error message. Everything schedule-*aware* already lives in the pure layer, where it is tested; the scheduler only has to be frequent enough not to be the limiting factor. *Affects: E2, E6.*
 
+- **D-065 — The league's timezone is config, and its absence is a blind spot.** ✅ *(2026-09-04)*. It was a hardcoded `ZoneInfo("America/New_York")` in `check.py`, introduced by me and flagged in passing rather than pressed on. ESPN reports `acquisitionSettings.waiverProcessHour` as a **bare integer with no timezone field anywhere** — the entire payload was searched to confirm it — so 11:00 Eastern and 11:00 Pacific are equally valid readings of the same number, three hours apart, on a deadline the tool states as fact. That is the failure class the rest of this codebase exists to prevent, reintroduced. Now `league.yaml` carries `timezone:`; an unknown zone is **refused rather than defaulted**, because a typo silently becoming Eastern leaves the user believing a value they set; and when `league.yaml` cannot be read the fallback is recorded as a blind spot, so the assumption cannot pass as knowledge. The run log records which zone was used, since a deadline three hours out is otherwise unexplainable afterwards. **Eastern confirmed by the user against ESPN's own UI on 2026-09-04.** *Affects: C4, D3, E6, and every deadline the product emits.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -352,7 +354,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 562 Python + 53 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
+| Unit/integration | 571 Python + 53 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

@@ -7,10 +7,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 
 SCORING_FORMATS = ("standard", "half-ppr", "ppr")
+
+# Used only when `league.yaml` cannot be read at all. **ESPN publishes no
+# timezone field anywhere** -- `acquisitionSettings.waiverProcessHour` is a bare
+# integer, and the whole payload was searched to confirm it -- so this cannot be
+# derived and has to be stated. Getting it wrong shifts every waiver deadline
+# the tool emits by hours, silently and confidently, which is the exact failure
+# class the rest of this codebase is built to avoid.
+DEFAULT_TIMEZONE = "America/New_York"
 STARTER_SLOTS = ("QB", "RB", "WR", "TE", "FLEX", "K", "DEF")
 BENCH_SLOT = "BN"
 VALID_SLOTS = STARTER_SLOTS + (BENCH_SLOT,)
@@ -28,6 +37,13 @@ class LeagueConfig:
     scoring: str
     my_pick: int
     roster: dict[str, int]
+    # The league's own clock. Waiver processing hours and quiet hours are both
+    # read in it. Not derivable from ESPN -- see DEFAULT_TIMEZONE.
+    timezone: str = DEFAULT_TIMEZONE
+
+    @property
+    def tzinfo(self):
+        return ZoneInfo(self.timezone)
 
     @property
     def starters_total(self) -> int:
@@ -257,6 +273,14 @@ def load_config(path: Path) -> LeagueConfig:
         if slot not in VALID_SLOTS:
             raise ConfigError(f"unknown roster slot {slot!r}; valid: {VALID_SLOTS}")
 
+    timezone = str(raw.get("timezone") or DEFAULT_TIMEZONE)
+    try:
+        ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        # Refused rather than defaulted: a typo'd zone that silently became
+        # Eastern would leave the user believing a value they set.
+        raise ConfigError(f"unknown timezone {timezone!r}: {exc}") from exc
+
     teams = int(raw["teams"])
     my_pick = int(raw["my_pick"])
     if not 1 <= my_pick <= teams:
@@ -269,4 +293,5 @@ def load_config(path: Path) -> LeagueConfig:
         scoring=scoring,
         my_pick=my_pick,
         roster={str(k): int(v) for k, v in roster.items()},
+        timezone=timezone,
     )

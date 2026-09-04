@@ -208,3 +208,55 @@ def test_a_non_numeric_watchdog_value_is_refused_rather_than_defaulted(tmp_path)
                         "watchdog: {max_silence_hours: soon}\n")
     with pytest.raises(ConfigError, match="must be numbers"):
         load_notify_config(p)
+
+
+# --- the league's clock, which ESPN does not publish ---
+
+
+def league_yaml(tmp_path, extra=""):
+    p = tmp_path / "league.yaml"
+    p.write_text(
+        "name: T\nseason: 2026\nteams: 12\nscoring: ppr\nmy_pick: 7\n"
+        "roster: {QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, K: 1, DEF: 1, BN: 7}\n" + extra
+    )
+    return p
+
+
+def test_the_timezone_defaults_to_eastern(tmp_path):
+    from ffcoach.config import DEFAULT_TIMEZONE
+
+    assert load_config(league_yaml(tmp_path)).timezone == DEFAULT_TIMEZONE
+
+
+def test_a_configured_timezone_is_used(tmp_path):
+    conf = load_config(league_yaml(tmp_path, "timezone: America/Los_Angeles\n"))
+    assert conf.timezone == "America/Los_Angeles"
+    assert conf.tzinfo.key == "America/Los_Angeles"
+
+
+def test_a_typo_in_the_timezone_is_refused_rather_than_defaulted(tmp_path):
+    """Falling back to Eastern would leave the user believing a value they set,
+    and shift every waiver deadline by hours without saying so."""
+    with pytest.raises(ConfigError, match="unknown timezone"):
+        load_config(league_yaml(tmp_path, "timezone: America/New_Yrok\n"))
+
+
+def test_the_timezone_actually_changes_a_waiver_deadline(tmp_path):
+    """The reason this is config and not a constant.
+
+    ESPN reports `waiverProcessHour: 11` with no zone anywhere in the payload,
+    so 11:00 Eastern and 11:00 Pacific are both plausible readings of the same
+    number -- three hours apart, on a deadline the tool states as fact.
+    """
+    import datetime as dt
+
+    from ffcoach.leagues.base import WaiverSettings
+    from ffcoach.model.deadlines import next_waiver_deadline
+
+    waivers = WaiverSettings(process_days=("WEDNESDAY",), process_hour=11)
+    now = dt.datetime(2026, 9, 8, 12, 0, tzinfo=dt.UTC)
+    east = load_config(league_yaml(tmp_path))
+    west = load_config(league_yaml(tmp_path, "timezone: America/Los_Angeles\n"))
+    a = next_waiver_deadline(waivers, now, east.tzinfo)
+    b = next_waiver_deadline(waivers, now, west.tzinfo)
+    assert b - a == dt.timedelta(hours=3)
