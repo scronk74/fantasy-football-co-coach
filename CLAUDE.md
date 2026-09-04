@@ -33,6 +33,7 @@ npm test                         # browser logic; installs no npm packages
 Node 26, which treats a bare path as a module entry point rather than a directory to scan.
 
 ```bash
+uv run ffcoach notify --init     # write notify.yaml with a fresh, unguessable topic
 uv run ffcoach notify --test     # prove alerts reach your phone before relying on them
 uv run ffcoach check             # this week's lineup: what to fix, by when
 uv run ffcoach check --notify    # ...and send it
@@ -213,6 +214,15 @@ rare.
 branches on, so the dry run walks the same path as a live send and cannot drift from
 it. It still loads and validates the config: a dry run that skipped validation would
 happily "succeed" against a broken topic.
+
+**Setup is a command, not a ritual.** `ffcoach notify --init` generates the topic with
+`secrets` and writes `notify.yaml` at mode 600. The topic is generated rather than asked
+for: left to a human it becomes "ffcoach" or a name plus a surname, and a public ntfy
+topic has no authentication. `--init` refuses to clobber an existing file, because
+overwriting changes the topic out from under a phone that is already subscribed —
+alerts would go on being "delivered" to a topic nobody is listening to, which is the
+worst failure this particular file has. A test asserts the template it writes is one the
+loader accepts, so the two cannot drift.
 
 **The ntfy topic name is the credential.** A public topic has no authentication at
 all — whoever knows the name can read your alerts and publish to them. So `notify.yaml`

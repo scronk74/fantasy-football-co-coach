@@ -16,6 +16,8 @@ from ffcoach.config import (
     load_config,
     load_espn_credentials,
     load_notify_config,
+    new_topic,
+    write_notify_config,
 )
 from ffcoach.leagues.espn import parse_league
 from ffcoach.leagues.espn_client import EspnUnavailable, fetch_league
@@ -103,6 +105,16 @@ def _parser() -> argparse.ArgumentParser:
                 help="append one JSON line per run here",
             )
         if name == "notify":
+            p.add_argument(
+                "--init",
+                action="store_true",
+                help="create notify.yaml with a fresh, unguessable ntfy topic",
+            )
+            p.add_argument(
+                "--force",
+                action="store_true",
+                help="with --init, replace an existing notify.yaml",
+            )
             p.add_argument(
                 "--test",
                 action="store_true",
@@ -296,9 +308,12 @@ def _notifier(args):
 
 
 def _run_notify(args) -> int:
-    """Prove the channel works before anything depends on it."""
+    """Set the channel up, and prove it works before anything depends on it."""
+    if args.init:
+        return _run_notify_init(args)
     if not args.test:
-        print("error: nothing to do; try `ffcoach notify --test`", file=sys.stderr)
+        print("error: nothing to do; try `ffcoach notify --init` or `--test`",
+              file=sys.stderr)
         return EXIT_ERROR
     try:
         conf = load_notify_config(args.notify_config)
@@ -446,6 +461,40 @@ def _watch_body(args, run_log: RunLog, ok: bool) -> None:
     if notifier.name != "console":
         history.record([alert.key])
     print(f"warning: {alert.reason}", file=sys.stderr)
+
+
+def _run_notify_init(args) -> int:
+    """Create `notify.yaml` with a fresh topic and say what to do next.
+
+    The topic is generated here rather than asked for. Left to a human it
+    becomes "ffcoach" or "steve-fantasy" -- and a public ntfy topic has no
+    authentication, so a guessable name is a stranger reading your alerts and
+    publishing fake ones to your phone.
+    """
+    topic = new_topic()
+    try:
+        write_notify_config(args.notify_config, topic, force=args.force)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except OSError as exc:
+        print(f"error: could not write {args.notify_config}: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    print(f"Wrote {args.notify_config} (gitignored, mode 600).")
+    print()
+    print("Next, on your phone:")
+    print("  1. Install ntfy — free, no account, iOS or Android.")
+    print("  2. Subscribe to this exact topic:")
+    print()
+    print(f"       {topic}")
+    print()
+    print(f"     Or open  https://ntfy.sh/{topic}  and tap Subscribe.")
+    print("  3. Come back and run:  uv run ffcoach notify --test")
+    print()
+    print("That topic is a credential — anyone who has it can read your alerts")
+    print("and send you fake ones. Do not paste it into a chat or an issue.")
+    return EXIT_ALL_CLEAR
 
 
 def _last_run_lines(run_log: RunLog) -> list[str]:
