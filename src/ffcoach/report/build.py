@@ -113,3 +113,73 @@ def write_board(payload: dict, path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=1))
+
+
+def check_payload(
+    result,
+    league_name: str,
+    generated_at: str,
+    timezone: str,
+) -> dict:
+    """One check, shaped for the Week page.
+
+    Findings are flattened here rather than in the browser: `FixPlan`, the
+    severity ordering and `is_actionable` are all tested Python, and
+    re-deriving any of them in JavaScript would be a second implementation of
+    the rules that decide whether you get told about a problem.
+
+    `status` and `blind_spots` travel verbatim. The page's job is to render the
+    difference between "nothing is wrong" and "we could not see everything"
+    (D-054), and it cannot do that from an empty findings list alone.
+    """
+    return {
+        "schema_version": 1,
+        "generated_at": generated_at,
+        "timezone": timezone,
+        "league": league_name,
+        "team": result.team_name,
+        "week": result.week,
+        "week_source": result.week_source,
+        "status": result.status,
+        "all_clear": result.all_clear,
+        "pre_draft": result.pre_draft,
+        "blind_spots": list(result.blind_spots),
+        "next_lock": _iso(result.next_lock),
+        "waiver_deadline": _iso(result.waiver_deadline),
+        "stale": any(s.stale for s in result.sources),
+        "age_seconds": max((s.age_seconds for s in result.sources), default=None),
+        "sources": [
+            {"name": s.name, "age_seconds": s.age_seconds, "stale": s.stale,
+             "error": s.error}
+            for s in result.sources
+        ],
+        "findings": [
+            {
+                "kind": f.kind,
+                "player_name": f.player_name,
+                "position": f.position,
+                "lineup_slot": f.lineup_slot,
+                "nfl_team": f.nfl_team,
+                "reason": f.reason,
+                "replacements": list(f.replacements),
+                "ir_candidates": list(f.ir_candidates),
+                # The verb, not the kind: "Claim" and "Swap" are different
+                # instructions, and a time alone cannot express the difference
+                # (D-046).
+                "verb": f.fix.verb,
+                "deadline": _iso(f.deadline),
+                "locked": f.locked,
+                # Computed here because `is_actionable` is tested Python and
+                # comparing a deadline to "now" in the browser would answer a
+                # slightly different question on every reload.
+                "actionable": f in result.actionable,
+                "lock_is_estimated": f.lock_is_estimated,
+                "severity": f.severity,
+            }
+            for f in result.findings
+        ],
+    }
+
+
+def _iso(moment) -> str | None:
+    return moment.isoformat() if moment is not None else None

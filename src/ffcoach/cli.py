@@ -42,7 +42,12 @@ from ffcoach.notify.history import AlertHistory
 from ffcoach.notify.message import notification_for
 from ffcoach.notify.policy import QuietHours, decide
 from ffcoach.notify.ntfy import ConsoleNotifier, NtfyNotifier
-from ffcoach.report.build import board_payload, league_payload, write_board
+from ffcoach.report.build import (
+    board_payload,
+    check_payload,
+    league_payload,
+    write_board,
+)
 from ffcoach.runlog import RunLog
 from ffcoach.watchdog import WatchdogConfig, assess
 from ffcoach.report.check_text import render_check
@@ -112,6 +117,17 @@ def _parser() -> argparse.ArgumentParser:
                 default=Path(".ffcoach-runs.jsonl"),
                 type=Path,
                 help="append one JSON line per run here",
+            )
+            p.add_argument(
+                "--out",
+                default=Path("web/data/check.json"),
+                type=Path,
+                help="write the payload the Week page reads",
+            )
+            p.add_argument(
+                "--no-write",
+                action="store_true",
+                help="do not write the Week page payload",
             )
         if name == "notify":
             p.add_argument(
@@ -837,6 +853,20 @@ def _check_body(args, cache: Cache, record: dict) -> int:
 
     for line in render_check(result, tz, league.name):
         print(line)
+
+    if not args.no_write:
+        payload = check_payload(
+            result,
+            league_name=league.name,
+            generated_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+            timezone=str(tz),
+        )
+        try:
+            write_board(payload, args.out)
+        except OSError as exc:
+            # The page going stale is worth a warning; it is not worth losing
+            # the alert this run exists to send.
+            print(f"warning: could not write {args.out}: {exc}", file=sys.stderr)
 
     if args.notify:
         rc = _deliver(args, result, now, record, tz)

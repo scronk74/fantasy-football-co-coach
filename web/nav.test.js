@@ -24,13 +24,20 @@ test("navHtml marks the current page", () => {
 
 test("navHtml does not mark other pages as current", () => {
   const html = navHtml("draft");
-  const draftLink = html.split("</a>").find((chunk) => chunk.includes("index.html"));
+  const draftLink = html.split("</a>").find((chunk) => chunk.includes("draft.html"));
   assert.match(draftLink, /current/);
   const leagueLink = html.split("</a>").find((chunk) => chunk.includes("league.html"));
   assert.doesNotMatch(leagueLink, /current/);
 });
 
+test("the front door is this week, not the draft board", () => {
+  // D-051. The app opening on the draft board meant the first thing you saw
+  // was the one page you said you did not want.
+  const front = PAGES.find((p) => p.href === "index.html");
+  assert.equal(front.id, "week");
+});
+
 test("navHtml adding a page to PAGES would not require touching this function", () => {
   // Guard against ever hardcoding page ids/labels inside navHtml itself.
-  assert.doesNotMatch(navHtml.toString(), /Draft Board|My League/);
+  assert.doesNotMatch(navHtml.toString(), /Draft Board|My League|This Week/);
 });

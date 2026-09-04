@@ -1,14 +1,14 @@
 :root {
   --bg: #f7f7f5; --panel: #fff; --ink: #1a1a18; --muted: #6b6b66;
   --line: #e4e4df; --accent: #c2410c;
-  --good: #15803d; --bad: #b91c1c;
+  --good: #15803d; --bad: #b91c1c; --warn: #a16207;
   --qb: #7c3aed; --rb: #15803d; --wr: #0369a1; --te: #b45309; --k: #6b7280;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16161a; --panel: #1e1e23; --ink: #ececea; --muted: #9d9d97;
     --line: #32323b; --accent: #fb923c;
-    --good: #4ade80; --bad: #f87171;
+    --good: #4ade80; --bad: #f87171; --warn: #fbbf24;
     --qb: #a78bfa; --rb: #4ade80; --wr: #38bdf8; --te: #fbbf24; --k: #9ca3af;
   }
 }
@@ -17,7 +17,8 @@ body {
   margin: 0; background: var(--bg); color: var(--ink);
   font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-header, main, .sitenav { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+header, main, footer, .sitenav { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
+footer { margin-top: 2rem; }
 header { padding-top: 22px; }
 .sitenav { display: flex; gap: 4px; padding-top: 14px; }
 .navlink {
@@ -126,4 +127,66 @@ td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: to
   /* 44px is the smallest reliably tappable target. The old controls were
      roughly 26x19. */
   .chip, button#reset, .board button { min-height: 44px; padding: 8px 14px; }
+}
+
+/* --- Week page ------------------------------------------------------- */
+/* UX rule 5: no state below is signalled by colour alone. Every badge and
+   every finding kind carries a word; the colour only reinforces it. */
+
+.subtitle { color: var(--muted); margin: 0.2rem 0 0.6rem; }
+.headline { font-size: 1.15rem; font-weight: 600; margin: 0.4rem 0 1rem; }
+
+.badge {
+  display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px;
+  font-size: 0.85rem; font-weight: 600; border: 1px solid currentColor;
+}
+.badge .mark { font-weight: 700; }
+.badge.s-problems { color: var(--bad); }
+.badge.s-unverified { color: var(--warn); }
+.badge.s-all_clear { color: var(--good); }
+.badge.s-pre_draft { color: var(--muted); }
+
+.blindspots {
+  border: 1px solid var(--warn); border-radius: 8px;
+  padding: 0.6rem 0.9rem; margin: 0 0 1.2rem;
+}
+.blindspots h2 { font-size: 0.95rem; margin: 0 0 0.4rem; }
+.blindspots ul { margin: 0; padding-left: 1.1rem; }
+
+.finding {
+  border: 1px solid var(--line); border-left-width: 4px;
+  border-radius: 8px; padding: 0.7rem 0.9rem; margin: 0 0 0.8rem;
+}
+/* The thick left edge repeats what the chip already says in words -- colour
+   reinforcing text, never carrying it alone (UX rule 5). */
+.finding.k-empty_slot, .finding.k-out { border-left-color: var(--bad); }
+.finding.k-bye, .finding.k-bye_next_week { border-left-color: var(--warn); }
+.finding.done { opacity: 0.6; border-left-color: var(--muted); }
+.finding h3 { font-size: 1rem; margin: 0 0 0.3rem; font-weight: 600; }
+.finding .kind {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid currentColor; border-radius: 4px; padding: 0 0.35rem;
+}
+.finding .k-empty_slot, .finding .k-out { color: var(--bad); }
+.finding .k-bye, .finding .k-bye_next_week { color: var(--warn); }
+.finding .slot { font-weight: 700; }
+.finding .team, .finding .nobody { color: var(--muted); font-weight: 400; }
+.finding .reason { margin: 0.2rem 0; }
+.finding .action { margin: 0.3rem 0; }
+.finding .verb { font-weight: 700; }
+.finding .past { color: var(--muted); font-style: italic; }
+.finding .options { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+.finding .options .none { color: var(--muted); list-style: none; margin-left: -1.1rem; }
+.finding .estimated { color: var(--muted); font-size: 0.85rem; margin: 0.3rem 0 0; }
+
+.deadlines h2 { font-size: 0.95rem; margin: 1.2rem 0 0.3rem; }
+.deadlines dl { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.8rem; margin: 0; }
+.deadlines dt { color: var(--muted); }
+.deadlines dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+/* Wide content scrolls inside itself; the page body never scrolls sideways. */
+@media (max-width: 30rem) {
+  .finding h3 { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; }
+  .deadlines dl { grid-template-columns: 1fr; }
+  .deadlines dd { margin-bottom: 0.4rem; }
 }
