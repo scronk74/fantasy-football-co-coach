@@ -1294,7 +1294,7 @@ def test_serve_binds_to_localhost_unless_lan_is_asked_for(tmp_path, capsys):
             pass
 
     original = cli.build_server
-    cli.build_server = lambda root, host, port: seen.append(host) or FakeServer()
+    cli.build_server = lambda root, host, port, **kw: seen.append(host) or FakeServer()
     try:
         main(["serve"])
         main(["serve", "--lan"])
@@ -1325,7 +1325,7 @@ def test_lan_mode_says_plainly_what_it_exposes(tmp_path, capsys):
             pass
 
     original = cli.build_server
-    cli.build_server = lambda root, host, port: FakeServer()
+    cli.build_server = lambda root, host, port, **kw: FakeServer()
     try:
         main(["serve", "--lan"])
     finally:

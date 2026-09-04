@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 631 Python + 87 JS, all green · CI gates both on every PR |
-| **Phase** | **C 7/7, D 3/5, E 4/6, F 2/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. The Week page is the front door. Next: the first real run after Monday's draft, then E6 (inactives sweep) and D4/F2 (per-alert control) |
+| **Tests** | 653 Python + 107 JS, all green · CI gates both on every PR |
+| **Phase** | **C 7/7, D 3/5, E 4/6, F 3/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. The Week page is the front door. Next: the first real run after Monday's draft, then E6 (inactives sweep) and D4/F2 (per-alert control) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -132,7 +132,7 @@ flowchart LR
         F0["F0 ffcoach serve<br/>DONE"]:::confirmed
         F1["F1 week page<br/>DONE · landing page"]:::confirmed
         F2["F2 notification control UI"]:::confirmed
-        F3["F3 source refresh panel"]:::confirmed
+        F3["F3 health panel<br/>DONE"]:::confirmed
         F4["F4 alert history view"]:::proposed
     end
     subgraph SG["G · Projections"]
@@ -196,7 +196,7 @@ flowchart LR
 | F0 | **`ffcoach serve` — local web server** | Done | 🟢 V1 | — | — | L | D-040, **D-071** | ✅ 2026-09-04 |
 | F1 | Week dashboard — **is the landing page** | Done | 🟢 V1 | — | C4 | M | D-027, D-028, D-051, **D-066** | ✅ 2026-09-04 |
 | F2 | Notification control UI (writes config) | Backlog | 🟢 V1 | — | D4, F0 | M | D-020, D-040 | ✅ 2026-08-29 |
-| F3 | Data-source refresh / health panel | Backlog | 🟢 V1 | — | E1, F0 | L | D-029 | ✅ 2026-08-29 |
+| F3 | Data-source refresh / health panel | Done | 🟢 V1 | — | E1, F0 | L | **D-074** | ✅ 2026-09-04 |
 | F4 | Alert history view | Backlog | 🔵 V1-nice | — | E1, F0 | L | — | 🤖 |
 | G1 | ESPN + Sleeper projection sources (**two, not three**) | Backlog | 🔵 V1-nice | — | B3 | M | D-030, D-043 | ✅ 2026-08-29 |
 | G2 | Aggregation + accuracy weighting | Backlog | 🔵 V1-nice | — | G1 | M | D-030 | ✅ 2026-08-29 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 4/6 (67%) · F 2/5 (40%) · G 0/5 · H 0/6.
-**Overall:** 24/42 steps done (57%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 4/6 (67%) · F 3/5 (60%) · G 0/5 · H 0/6.
+**Overall:** 25/42 steps done (60%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -348,6 +348,8 @@ flowchart LR
 - **D-072 — One machine alerts, and `schedule --install` decides which.** ✅ *(2026-09-04)*. Two machines running the check sends every alert twice — alert history is a local SQLite file, so the two-strike counts never line up — and, far worse, **a laptop that checks even occasionally keeps the heartbeat green while the scheduler machine is face-down**, which is E3 defeated by its own mechanism. `notify.yaml`'s `scheduler_host` is empty by default, because one machine is the common case and a guard you must configure before anything works buys nothing until a second machine exists; `schedule --install` records it automatically, since the moment a scheduler exists is exactly the moment a second machine becomes dangerous and a guard nobody remembers to set is not a guard (`--no-claim` opts out). A non-scheduler run **still checks and still writes the page** — it declines only to send and to ping, and says so on stdout and in the run log. Hostnames are normalised: macOS returns `MacBook-Air.local` on one network and `MacBook-Air` on another, and a guard that fires after a Wi-Fi change is a guard that gets deleted. *Affects: E2, E3, D1.*
 - **D-073 — Setup is one checklist, rendered by two commands.** ✅ *(2026-09-04)*. `_setup_steps()` returns `(done, what, how to fix it)` and is read by **both** `ffcoach init` and `ffcoach doctor`, so "what is missing" and "how do I fix it" cannot drift apart. `init` creates `league.yaml` and `notify.yaml` and is idempotent; it is deliberately **not interactive**, because the one step nobody can automate — the ESPN cookies, which come out of the user's own browser — would stall a wizard, and a checklist that names the step is better than a wizard that stops at it. Delivers D-025: clonable by someone else, and the second machine is the first real test of that. *Affects: E2, and every future machine.*
 
+- **D-074 — The health panel is built per request, and "unknown" is its own state.** ✅ *(2026-09-04)*. E1 and E3 already recorded everything it shows; all of it lived in a JSONL file and a terminal command, which is nowhere the user looks on a Sunday morning. `GET /api/health` is composed per request and **never written to a file** — a panel served from a snapshot would report "last run 3 minutes ago" out of a file written three hours ago, which is the one thing it exists to make impossible, so its freshness cannot itself be cached. `agent_loaded` is `True`/`False`/`None`, and `None` renders as "could not be determined": a panel that says yes because it failed to ask is exactly the failure it is against. Any unknown drags the overall state below OK; any bad beats any unknown. **No secret is in the payload** — not the topic, not the ping URL, not the cookies, only whether each is configured — because this JSON is served over the LAN under `--lan` and is what someone screenshots when asking for help. `POST /api/refresh` is POST-only (a GET with a side effect can be fired by an `<img>` tag, and this one reaches ESPN) and rate-limited to one run per 30 seconds, answering **429** rather than a silent success. *Affects: F2, F4.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -368,7 +370,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 631 Python + 87 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
+| Unit/integration | 653 Python + 107 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

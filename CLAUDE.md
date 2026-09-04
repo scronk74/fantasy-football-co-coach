@@ -48,7 +48,7 @@ uv run ffcoach league --fixture tests/fixtures/espn_league.json   # no ESPN acce
 uv run ffcoach refresh           # populate the cache only
 uv run ffcoach init              # create the config files, list what is still missing
 uv run ffcoach doctor            # config, cache, alert channel, last run, remaining setup
-uv run ffcoach serve             # pages at http://127.0.0.1:8765/
+uv run ffcoach serve             # pages at http://127.0.0.1:8765/ (incl. /health.html)
 uv run ffcoach serve --lan       # ...reachable from other devices (opt-in)
 uv run ffcoach schedule --print  # the launchd plist, without installing it
 uv run ffcoach schedule --install   # ...and load it
@@ -280,6 +280,33 @@ and a guard that fires after a Wi-Fi change is a guard that gets deleted.
 `ffcoach init` and `ffcoach doctor`, so "what is missing" and "how do I fix it" cannot
 drift apart. `init` creates what it can and names what it cannot: the ESPN cookies need a
 browser, and a wizard that stalls there is worse than a checklist that names the step.
+
+### The health panel is built per request, and unknown is not healthy
+
+E1 and E3 already recorded everything the panel shows — the run log knows when a check
+last succeeded, the watchdog knows whether the tool has stopped working, `doctor` knows
+what setup remains. All of it lived in a JSONL file and a terminal command, which is to
+say nowhere the user looks on a Sunday morning.
+
+`GET /api/health` is composed **per request and never written to a file.** A health panel
+served from a snapshot would report "last run 3 minutes ago" out of a file written three
+hours ago — the one thing this page exists to make impossible, so its freshness cannot
+itself be cached.
+
+**Unknown is its own state.** `agent_loaded` is `True` / `False` / `None`, and `None`
+renders as "could not be determined" rather than as a green tick — a panel that says yes
+because it failed to ask is exactly the failure it is against. Any unknown drags the
+overall state below OK; any bad beats any unknown.
+
+**No secret is ever in the payload** — not the ntfy topic, not the heartbeat URL, not the
+cookies. Only whether each is configured. This JSON is served over the LAN under
+`serve --lan`, and it is what someone screenshots when asking for help. A test asserts the
+generated topic and ping URL are both absent from the serialised payload.
+
+`POST /api/refresh` runs a check on demand. **POST only** — a GET endpoint with a side
+effect can be fired by an `<img>` tag or a link preview, and this one reaches out to ESPN.
+It is rate-limited to one run per 30 seconds and answers **429**, because a button that
+appears to work while doing nothing is worse than one that says "not yet".
 
 ### `ffcoach serve` is rooted at `web/`, and that is the point
 

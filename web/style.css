@@ -199,3 +199,31 @@ td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: to
   padding: 0 0.3em; vertical-align: middle;
 }
 
+
+/* --- Health page ------------------------------------------------------ */
+/* Every state is a word plus a character mark; the colour only reinforces. */
+
+.headline.h-ok { color: var(--good); }
+.headline.h-bad { color: var(--bad); }
+.headline.h-unknown { color: var(--warn); }
+
+.hrow {
+  display: grid; grid-template-columns: 1.4rem 9rem 1fr; gap: 0.5rem;
+  align-items: baseline; padding: 0.45rem 0; border-bottom: 1px solid var(--line);
+}
+.hrow:last-child { border-bottom: none; }
+.hmark { font-weight: 700; text-align: center; }
+.h-ok .hmark { color: var(--good); }
+.h-bad .hmark { color: var(--bad); }
+.h-unknown .hmark { color: var(--warn); }
+.hlabel { font-weight: 600; }
+.hdetail { color: var(--muted); }
+
+.setup h2, .sources h2 { font-size: 0.95rem; margin: 1.4rem 0 0.3rem; }
+.setup ul, .sources ul { margin: 0; padding-left: 1.1rem; }
+.setup li { margin-bottom: 0.4rem; }
+
+@media (max-width: 30rem) {
+  .hrow { grid-template-columns: 1.4rem 1fr; }
+  .hdetail { grid-column: 2; }
+}

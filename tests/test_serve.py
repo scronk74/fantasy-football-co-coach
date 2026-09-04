@@ -11,7 +11,14 @@ import threading
 import httpx
 import pytest
 
-from ffcoach.serve import DEFAULT_PORT, LOCALHOST, ServeError, build_server, web_root
+from ffcoach.serve import (
+    DEFAULT_PORT,
+    LOCALHOST,
+    NoStoreHandler,
+    ServeError,
+    build_server,
+    web_root,
+)
 
 
 @pytest.fixture
@@ -24,6 +31,14 @@ def project(tmp_path):
     (tmp_path / "espn.yaml").write_text("espn_s2: SUPERSECRET\nswid: '{S}'\n")
     (tmp_path / "notify.yaml").write_text("ntfy:\n  topic: SECRETTOPIC\n")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _reset_refresh_cooldown():
+    """The cooldown is class state, so one test must not gate the next."""
+    NoStoreHandler._last_refresh = 0.0
+    yield
+    NoStoreHandler._last_refresh = 0.0
 
 
 @pytest.fixture
@@ -122,3 +137,100 @@ def test_a_busy_port_is_reported_rather_than_silently_failing(project):
 def test_the_default_port_is_stable():
     """It goes in a bookmark and, eventually, in a launchd plist."""
     assert DEFAULT_PORT == 8765
+
+
+# --- the health endpoint ---
+
+
+@pytest.fixture
+def api(project):
+    calls = {"health": 0, "refresh": 0}
+
+    def health():
+        calls["health"] += 1
+        return {"ok": True, "n": calls["health"]}
+
+    def refresh():
+        calls["refresh"] += 1
+        return True, "done"
+
+    srv = build_server(web_root(project), LOCALHOST, 0, health=health, refresh=refresh)
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://{LOCALHOST}:{srv.server_address[1]}", calls
+    srv.shutdown()
+    srv.server_close()
+    thread.join(timeout=5)
+
+
+def test_health_is_built_per_request(api):
+    """A health panel served from a snapshot would report "last run 3 minutes
+    ago" out of a file written three hours ago."""
+    base, _ = api
+    first = httpx.get(f"{base}/api/health").json()
+    second = httpx.get(f"{base}/api/health").json()
+    assert first["n"] == 1
+    assert second["n"] == 2
+
+
+def test_health_is_never_cached(api):
+    base, _ = api
+    headers = httpx.get(f"{base}/api/health").headers
+    assert "no-store" in headers["cache-control"]
+
+
+def test_refresh_is_post_only(api):
+    """A GET with a side effect can be fired by an <img> tag or a link
+    preview, and this one reaches out to ESPN."""
+    base, calls = api
+    assert httpx.get(f"{base}/api/refresh").status_code == 404
+    assert calls["refresh"] == 0
+
+
+def test_refresh_runs_the_check(api):
+    base, calls = api
+    response = httpx.post(f"{base}/api/refresh")
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert calls["refresh"] == 1
+
+
+def test_a_second_refresh_is_refused_rather_than_silently_ignored(api):
+    """A held-down button must not become a load generator, and a button that
+    appears to work while doing nothing is worse than one that says "not yet"."""
+    base, calls = api
+    httpx.post(f"{base}/api/refresh")
+    second = httpx.post(f"{base}/api/refresh")
+    assert second.status_code == 429
+    assert second.json()["retry_after_seconds"] > 0
+    assert calls["refresh"] == 1
+
+
+def test_an_unknown_api_path_is_a_json_404(api):
+    base, _ = api
+    assert httpx.post(f"{base}/api/nope").status_code == 404
+
+
+def test_a_server_without_the_endpoints_says_so_rather_than_500ing(server):
+    assert httpx.get(f"{server}/api/health").status_code == 503
+    assert httpx.post(f"{server}/api/refresh").status_code == 503
+
+
+def test_two_servers_do_not_share_endpoint_state(project):
+    """The handlers are bound to a subclass, not the shared class."""
+    a = build_server(web_root(project), LOCALHOST, 0, health=lambda: {"which": "a"})
+    b = build_server(web_root(project), LOCALHOST, 0, health=lambda: {"which": "b"})
+    threads = []
+    for srv in (a, b):
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        threads.append(t)
+    try:
+        got_a = httpx.get(f"http://{LOCALHOST}:{a.server_address[1]}/api/health").json()
+        got_b = httpx.get(f"http://{LOCALHOST}:{b.server_address[1]}/api/health").json()
+        assert (got_a["which"], got_b["which"]) == ("a", "b")
+    finally:
+        for srv, t in zip((a, b), threads):
+            srv.shutdown()
+            srv.server_close()
+            t.join(timeout=5)
