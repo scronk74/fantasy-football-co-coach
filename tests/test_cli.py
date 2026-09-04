@@ -998,6 +998,52 @@ def in_workspace(tmp_path):
     return cwd
 
 
+@pytest.fixture
+def on_macos(monkeypatch):
+    """Pretend this is a Mac.
+
+    CI runs on Linux, so without this every assertion below would be about the
+    platform refusal rather than about the scheduler. The refusal gets its own
+    test; everything else is platform-independent logic and is worth running
+    everywhere.
+    """
+    import ffcoach.cli as cli
+
+    monkeypatch.setattr(cli, "_is_macos", lambda: True)
+
+
+def test_a_non_macos_machine_is_told_plainly_rather_than_given_cron(
+    tmp_path, capsys, monkeypatch
+):
+    """D-022: cron skips jobs missed while asleep, so it is not a fallback."""
+    import os
+
+    import ffcoach.cli as cli
+
+    monkeypatch.setattr(cli, "_is_macos", lambda: False)
+    cwd = in_workspace(tmp_path)
+    try:
+        assert main(["schedule", "--install"]) == 1
+    finally:
+        os.chdir(cwd)
+    assert "macOS-only" in capsys.readouterr().err
+
+
+def test_the_plist_can_be_inspected_on_any_platform(tmp_path, capsys, monkeypatch):
+    """`--print` writes and loads nothing, so it has no reason to be gated."""
+    import os
+
+    import ffcoach.cli as cli
+
+    monkeypatch.setattr(cli, "_is_macos", lambda: False)
+    cwd = in_workspace(tmp_path)
+    try:
+        assert main(["schedule", "--print"]) == 0
+    finally:
+        os.chdir(cwd)
+    assert "com.ffcoach.check" in capsys.readouterr().out
+
+
 def test_print_writes_nothing_and_loads_nothing(tmp_path, capsys):
     """The inspectable path: see exactly what would be installed, first."""
     import os
@@ -1020,7 +1066,7 @@ def test_print_writes_nothing_and_loads_nothing(tmp_path, capsys):
     assert calls == []
 
 
-def test_install_boots_the_agent_out_before_bootstrapping_it(tmp_path):
+def test_install_boots_the_agent_out_before_bootstrapping_it(tmp_path, on_macos):
     """Re-installing after an edit must replace the definition, not sit behind
     the one already loaded."""
     import os
@@ -1042,7 +1088,7 @@ def test_install_boots_the_agent_out_before_bootstrapping_it(tmp_path):
     assert (tmp_path / "agent.plist").exists()
 
 
-def test_a_failed_bootstrap_is_reported_rather_than_claimed_as_success(tmp_path, capsys):
+def test_a_failed_bootstrap_is_reported_rather_than_claimed_as_success(tmp_path, capsys, on_macos):
     """A scheduler that silently did not load is the failure this whole stage
     is about."""
     import os
@@ -1064,7 +1110,7 @@ def test_a_failed_bootstrap_is_reported_rather_than_claimed_as_success(tmp_path,
     assert "nothing is scheduled" in err
 
 
-def test_install_refuses_in_a_directory_with_no_config(tmp_path, capsys):
+def test_install_refuses_in_a_directory_with_no_config(tmp_path, capsys, on_macos):
     """launchd reports a missing config as a nonzero exit, forever, silently."""
     import os
 
@@ -1077,7 +1123,7 @@ def test_install_refuses_in_a_directory_with_no_config(tmp_path, capsys):
     assert "league.yaml" in capsys.readouterr().err
 
 
-def test_an_out_of_range_interval_is_refused(tmp_path, capsys):
+def test_an_out_of_range_interval_is_refused(tmp_path, capsys, on_macos):
     import os
 
     cwd = in_workspace(tmp_path)
@@ -1088,7 +1134,7 @@ def test_an_out_of_range_interval_is_refused(tmp_path, capsys):
     assert "interval must be between" in capsys.readouterr().err
 
 
-def test_uninstall_removes_the_plist_even_when_nothing_was_loaded(tmp_path, capsys):
+def test_uninstall_removes_the_plist_even_when_nothing_was_loaded(tmp_path, capsys, on_macos):
     import ffcoach.cli as cli
 
     plist = tmp_path / "agent.plist"
@@ -1104,7 +1150,7 @@ def test_uninstall_removes_the_plist_even_when_nothing_was_loaded(tmp_path, caps
     assert "Unscheduled" in capsys.readouterr().out
 
 
-def test_status_reports_loaded_and_whether_anything_has_actually_run(tmp_path, capsys):
+def test_status_reports_loaded_and_whether_anything_has_actually_run(tmp_path, capsys, on_macos):
     """R-2 is exactly the gap between those two facts: launchd accepting a
     plist says nothing about the job succeeding or reaching a phone."""
     import ffcoach.cli as cli
@@ -1123,7 +1169,7 @@ def test_status_reports_loaded_and_whether_anything_has_actually_run(tmp_path, c
     assert "nothing has run yet" in out
 
 
-def test_status_says_plainly_when_nothing_is_scheduled(tmp_path, capsys):
+def test_status_says_plainly_when_nothing_is_scheduled(tmp_path, capsys, on_macos):
     import ffcoach.cli as cli
 
     original_lc, original_path = cli._launchctl, cli.agent_plist_path

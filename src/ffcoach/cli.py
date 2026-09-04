@@ -357,8 +357,20 @@ def _current_agent(args):
     return build_agent(Path.cwd(), Path(uv), args.interval)
 
 
+def _is_macos() -> bool:
+    """Its own function so the tests can stub it.
+
+    CI runs on Linux, and gating on `sys.platform` inline meant every branch
+    below was unreachable there -- the whole command would have been covered
+    only on the author's laptop. That is the same gap R-2 already regrets about
+    `launchctl`, and there is no reason to widen it to code that is perfectly
+    testable anywhere.
+    """
+    return sys.platform == "darwin"
+
+
 def _run_schedule(args) -> int:
-    if sys.platform != "darwin" and not args.print_only:
+    if not _is_macos() and not args.print_only:
         # cron is not an acceptable substitute (D-022) and pretending otherwise
         # would ship a scheduler that skips every job missed during sleep.
         print("error: launchd is macOS-only; this machine is not macOS.",
