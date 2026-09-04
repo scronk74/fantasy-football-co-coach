@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -319,3 +320,21 @@ def test_a_non_numeric_waiver_hour_makes_the_schedule_unknown(raw):
 def test_a_valid_waiver_hour_still_reads_normally(raw):
     league = parse_league(json.dumps(set_waiver_hour(json.loads(raw), 11)))
     assert league.waivers.process_hour == 11
+
+
+def test_draft_state_is_read_from_espn():
+    """Gates whether the lineup checks run at all -- see check.py."""
+    raw = json.loads(FIXTURE.read_text())
+    raw["draftDetail"] = {"drafted": False, "inProgress": False}
+    assert parse_league(json.dumps(raw)).draft_completed is False
+    raw["draftDetail"]["drafted"] = True
+    assert parse_league(json.dumps(raw)).draft_completed is True
+
+
+def test_an_absent_or_non_boolean_draft_state_is_unknown_not_false():
+    """Absence must not silence every check for a season."""
+    raw = json.loads(FIXTURE.read_text())
+    raw.pop("draftDetail", None)
+    assert parse_league(json.dumps(raw)).draft_completed is None
+    raw["draftDetail"] = {"drafted": "yes"}
+    assert parse_league(json.dumps(raw)).draft_completed is None

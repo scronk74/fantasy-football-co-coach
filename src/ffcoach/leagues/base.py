@@ -162,6 +162,12 @@ class League:
     current_week: int | None = None
     waivers: WaiverSettings = WaiverSettings()
     lineup_lock: LineupLock = LineupLock()
+    # ESPN's `draftDetail.drafted`. `None` means the field was absent, which is
+    # not the same as False -- an unknown draft state must not suppress checks.
+    # Before the draft every starting slot is legitimately empty, and reporting
+    # nine "claim someone by Friday" findings for a roster the draft will fill
+    # on Monday is the exact wolf-crying that makes an alert channel worthless.
+    draft_completed: bool | None = None
     # Things the adapter could not interpret: an unrecognized lineup slot id, a
     # pro team we have no abbreviation for, a waiver hour outside 0-23. Carried
     # on the model rather than logged at the parse site so they survive into the

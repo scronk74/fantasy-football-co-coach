@@ -33,6 +33,10 @@ npm test                         # browser logic; installs no npm packages
 Node 26, which treats a bare path as a module entry point rather than a directory to scan.
 
 ```bash
+uv run ffcoach check             # this week's lineup: what to fix, by when
+uv run ffcoach check --fixture tests/fixtures/espn_league.json \
+      --my-swid '{ABCDEF12-3456-7890-ABCD-EF1234567890}' --season 2025 \
+      --now 2025-10-01T09:00-04:00        # the whole decision, offline
 uv run ffcoach build             # fetch data -> web/data/board.json
 uv run ffcoach league            # ESPN league/rosters -> web/data/league.json
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # no ESPN access needed
@@ -148,6 +152,36 @@ payload and onto the page, not just to the stderr of a run nobody watched. Absen
 evidence; only a positive signal is. `Schedule.status()` returns `playing` / `bye` /
 `unknown` for this reason, and a bye additionally requires being the team's *single*
 missing week, so a truncated feed cannot manufacture byes.
+
+### An all-clear must be earned, not inferred from silence
+
+`check.py` composes the whole safety decision — `ffcoach check` is the only thing that
+runs the detection Stage C built. Its central type is `CheckResult`, and the property
+worth understanding is `all_clear`, which requires **no findings *and* no blind spots**.
+
+A check that finds nothing is not a check that found nothing wrong. Without ESPN's
+`lineupSlotCounts` the empty-slot check never runs, and an empty starting slot produces
+exactly the same empty list as a healthy roster. A week-old cached roster, a derived
+week, and an unrecognized slot id fail the same way. `blind_spots` records each, so the
+statuses are:
+
+```
+problems    findings you can still act on        -> interrupt
+pre_draft   the roster does not exist yet        -> nothing to check
+unverified  nothing found, but we were partly blind -> say so, do not reassure
+all_clear   nothing found, and we looked everywhere -> silence is honest
+```
+
+This is the `UNKNOWN`-plus-diagnostic rule applied one level up: to the run, not the
+field. `pre_draft` was not designed — the first live run, four days before the real
+draft, emitted **nine** "claim someone by Friday" findings for a roster the draft would
+fill on Monday. It reads ESPN's `draftDetail.drafted` and tests `is False`, never
+truthiness: an absent field is `None`, and treating absence as "not drafted" would mute
+every alert for a season the first time ESPN renamed it.
+
+Exit codes, because the check runs unattended long before anyone reads its output:
+`0` all clear · `1` could not run · `2` still actionable · `3` not a clean look.
+`--now` refuses a naive instant rather than reading it as UTC and moving every deadline.
 
 ### Deadlines: the kind of fix comes before the time
 

@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 359 Python + 53 JS, all green · CI gates both on every PR |
-| **Phase** | **Stage C 6/7.** C7 (`CheckResult` + `ffcoach check`) is Next and is the whole critical path — D, E and F are all unbuilt |
+| **Tests** | 399 Python + 53 JS, all green · CI gates both on every PR |
+| **Phase** | **Stage C complete (7/7).** Detection is finally reachable: `ffcoach check` runs the whole safety decision. Next is D1 (the notifier) and F1 (the Week page) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -181,7 +181,7 @@ flowchart LR
 | C4 | Action-deadline alerting + bye look-ahead | Done | 🟢 V1 | — | C3 | M | D-014 | ✅ 2026-08-29 |
 | C5 | Read lineup-lock league setting | Done | 🟢 V1 | — | B1 | M | D-015 | ✅ 2026-08-29 |
 | C6 | **Truth repairs from the 2026-08-31 review** | Done | 🟢 V1 | — | C5 | M | D-044…D-048 | ✅ 2026-08-31 |
-| C7 | **`CheckResult` + `ffcoach check --dry-run`** | Next | 🟢 V1 | **Mon 09-07** | C6 | **H** | D-049 | ✅ 2026-09-03 |
+| C7 | **`CheckResult` + `ffcoach check`** | Done | 🟢 V1 | — | C6 | **H** | D-049, **D-054** | ✅ 2026-09-03 |
 | D1 | `Notifier` interface + **ntfy / Pushover first** | Backlog | 🟢 V1 | **Wed 09-09** | C7 | M | D-016, D-042 | ✅ 2026-09-03 |
 | D2 | Message rendering (160-char SMS budget) | Backlog | 🟢 V1 | Week 1 | D1 | L | D-017 | ✅ 2026-08-29 |
 | D3 | Quiet hours + two-strike repeat policy | Backlog | 🟢 V1 | Week 1 | D1 | M | D-018, D-019 | ✅ 2026-08-29 |
@@ -210,13 +210,14 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 6/7 (86%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 14/42 steps done (33%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 15/42 steps done (36%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
-> detection has no production caller: `find_problems()` still appears exactly once in `src/`,
-> at its own definition. **D-050 adds the second discount.** Three of Stage A's four steps
+> detection had no production caller. **C7 closed that on 2026-09-03** — `ffcoach check`
+> composes it and exits with a status code — so the discount that mattered most is gone;
+> nothing yet *delivers* the result, which is D1. **D-050 adds the second discount.** Three of Stage A's four steps
 > (A2, A3, and most of the report layer feeding `board.json`) serve a draft board the user
 > has said he does not want. Counting them as V1 progress inflates a number that was already
 > measuring code written rather than anything runnable. Left un-reweighted so the history
@@ -313,6 +314,10 @@ flowchart LR
 - **D-053 — A lookup table's age does not age the page. Amends D-044.** ✅ *(2026-09-03)*. Found by the first real run. The crosswalk's TTL is seven days (identity changes slowly); ADP's is six hours (it moves hourly in draft season). `freshest()` took the oldest of both, so a board whose every number was two minutes old announced **"data 6d old"**. Taking the oldest input is right when inputs are comparable; a join table is not — nothing on the page comes from it, it only binds ids. `freshest(*results, lookups=())`: a lookup's *age* is exempt, its *stale* flag is not, because past its TTL a wrong bind puts the wrong player's bye week on the page. A banner that cries stale on a live page is the same trust failure D-044 exists to prevent, arriving from the other side.
 - **D-042 — reconfirmed.** ✅ *(2026-09-03)*. Asked again now that delivery is imminent; the user chose a phone push app (ntfy or Pushover) over email and webhooks. One HTTP POST, no carrier, no SMTP, no OAuth, and it reaches him away from the Mac — which matters because of R-3.
 
+- **D-054 — An all-clear requires that every check actually ran.** ✅ *(2026-09-03)*. C7's core idea, and it did not come from the plan. A check that finds nothing is not a check that found nothing wrong: without `lineupSlotCounts` the empty-slot check never runs, and an empty starting slot produces the same empty list as a healthy roster. A stale cached roster, a derived week, and an unrecognized slot id all fail the same way. So `CheckResult.blind_spots` records what stopped the run from seeing everything, and `all_clear` needs **both** no findings and no blind spots. Three states — `problems` / `unverified` / `all_clear` — which map directly onto interrupt / say-so / stay-silent. This is `D-047`'s rule ("absence is not evidence") applied one level up, to the run rather than to a field.
+- **D-055 — Before the draft, an empty roster is not a lineup problem.** ✅ *(2026-09-03)*. Found by running C7 against the live league four days before the draft: **nine** confident "claim someone by Friday" findings, one per empty starting slot, for a roster the draft would fill on Monday. Nine wrong alerts on the first night is how a channel becomes something you mute. ESPN publishes `draftDetail.drafted`; the checks skip when it is `False`, giving a fourth status `pre_draft`. Tested with `is False` and not truthiness: an absent field is `None`, and treating absence as "not drafted" would mute every alert for a season the first time ESPN renamed the field.
+- **D-056 — No `--dry-run` until there is a send to skip.** ✅ *(2026-09-03)*. C7's plan named the flag. Nothing is delivered or written yet, so it would suppress nothing — the same broken promise as an unemittable `FixKind` (D-046). It arrives with D1. `--now` carries the offline-testing weight instead, and **refuses a naive instant** rather than reading it as UTC and shifting every deadline by hours.
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -332,7 +337,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 359 Python + 53 JS, all green; offline via committed fixtures |
+| Unit/integration | 399 Python + 53 JS, all green; offline via committed fixtures |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |
