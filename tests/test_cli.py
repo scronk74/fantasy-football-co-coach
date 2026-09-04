@@ -1203,3 +1203,58 @@ def test_the_suite_never_writes_to_the_real_run_log(tmp_path):
 
     assert Path.cwd() != Path(__file__).resolve().parent.parent
     assert not (Path.cwd() / ".ffcoach-runs.jsonl").exists()
+
+
+# --- the league's clock ---
+
+
+def test_the_check_uses_the_timezone_from_league_config(checkable, tmp_path, capsys):
+    """ESPN reports `waiverProcessHour: 11` with no zone. Eastern and Pacific
+    are both plausible readings of that number, three hours apart, on a
+    deadline the tool states as fact."""
+    east = tmp_path / "east.yaml"
+    east.write_text(LEAGUE)
+    west = tmp_path / "west.yaml"
+    west.write_text(LEAGUE + "timezone: America/Los_Angeles\n")
+
+    def deadline_line(config):
+        main([
+            "check",
+            "--fixture", str(FIXTURES / "espn_league.json"),
+            "--cache", str(checkable), "--season", "2025", "--my-swid", SWID,
+            "--now", "2025-10-01T09:00-04:00",
+            "--config", str(config), "--log", str(tmp_path / "r.jsonl"),
+        ])
+        out = capsys.readouterr().out
+        return next(ln for ln in out.splitlines() if ln.startswith("Waivers next"))
+
+    assert "EDT" in deadline_line(east)
+    assert "PDT" in deadline_line(west)
+
+
+def test_an_unreadable_league_config_is_a_blind_spot_not_a_silent_assumption(
+    checkable, tmp_path, capsys
+):
+    """A guessed timezone shifts every waiver deadline by hours while the tool
+    goes on stating them as fact."""
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable), "--season", "2025", "--my-swid", SWID,
+        "--now", "2025-10-01T09:00-04:00",
+        "--config", str(tmp_path / "absent.yaml"),
+        "--log", str(tmp_path / "r.jsonl"),
+    ])
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "timezone assumed" in out
+    assert "Waiver deadlines may be hours off" in out
+
+
+def test_the_run_log_records_which_timezone_was_used(checkable, tmp_path):
+    """A deadline three hours out is unexplainable afterwards without it."""
+    conf = tmp_path / "league.yaml"
+    conf.write_text(LEAGUE + "timezone: America/Chicago\n")
+    log = tmp_path / "runs.jsonl"
+    run_check(checkable, "--config", str(conf), "--log", str(log))
+    assert "America/Chicago" in read_log(log)[0]["timezone"]

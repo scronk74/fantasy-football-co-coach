@@ -449,8 +449,18 @@ These come from direct user feedback and have executable assertions behind them:
   no refresh endpoint, so `EspnAuthError` (401/403) is raised distinctly and deliberately
   does **not** fall back to stale cache.
 
-Nothing about league format may be hardcoded — scoring, roster slots, team count, and
-waiver system all come from config.
+Nothing about league format may be hardcoded — scoring, roster slots, team count,
+waiver system, **and the league's timezone** all come from config.
+
+That last one was a hardcoded constant until 2026-09-04 and is worth the paragraph.
+ESPN reports `acquisitionSettings.waiverProcessHour` as a **bare integer with no
+timezone field anywhere in the payload** — the whole document was searched to confirm
+it. So 11:00 Eastern and 11:00 Pacific are equally valid readings of the same number,
+three hours apart, on a deadline this tool states as fact. `league.yaml` carries
+`timezone:`, an unknown zone is refused rather than defaulted (a typo silently becoming
+Eastern would leave the user believing a value they set), and when the config cannot be
+read at all the fallback is recorded as a **blind spot** so an assumption never passes
+as knowledge.
 
 **The live league, read from ESPN on 2026-09-03** (league `1076479097`). Recorded here
 because every fixture and every default should be checked against it, not against a
@@ -463,6 +473,7 @@ guess:
 | Bench | BN 7 · **IR 1** (`config.py`'s `VALID_SLOTS` has no IR — nothing is drafted into it) |
 | Waivers | Priority, **no budget**. Processes **six days a week at 11:00** — every day but Tuesday. 24h claim window |
 | Lineup lock | `INDIVIDUAL_GAME` → per-player, at each player's kickoff |
+| Timezone | **Eastern**, confirmed by the user against ESPN's own UI on 2026-09-04. ESPN itself publishes none |
 
 `my_pick` in `league.yaml` fed only the legacy draft board, and ESPN cannot supply it
 anyway: `draftSettings.orderType` is `DRAFT_START`, so the order is drawn when the draft

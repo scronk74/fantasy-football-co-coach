@@ -499,7 +499,7 @@ def _run_notify(args) -> int:
     return EXIT_ALL_CLEAR
 
 
-def _deliver(args, result, now, outcome: dict) -> int | None:
+def _deliver(args, result, now, outcome: dict, tz) -> int | None:
     """Send what the repeat policy allows. Returns an exit code only on failure.
 
     The order here is load-bearing: **decide, send, then record**. Recording
@@ -517,7 +517,7 @@ def _deliver(args, result, now, outcome: dict) -> int | None:
     history = AlertHistory(args.cache, now=now.timestamp)
     quiet = QuietHours(enabled=not args.ignore_quiet_hours)
     plan = decide(
-        result.actionable, result.week, history.records(), now, quiet, LEAGUE_TZ
+        result.actionable, result.week, history.records(), now, quiet, tz
     )
 
     # A suppressed alert is a decision, not an absence. Printed every time so
@@ -526,7 +526,7 @@ def _deliver(args, result, now, outcome: dict) -> int | None:
         print(f"  held: {reason}")
     outcome["held"] = len(plan.held)
 
-    note = notification_for(result, LEAGUE_TZ, plan.send) if plan.send else None
+    note = notification_for(result, tz, plan.send) if plan.send else None
     if note is None:
         # D-016: zero interrupts in a clean week is the system working. Said out
         # loud so "nothing sent" is never confused with a failure to send --
@@ -686,6 +686,24 @@ def _last_run_lines(run_log: RunLog) -> list[str]:
     return lines
 
 
+def _league_timezone(args):
+    """`(tzinfo, blind-spot note or None)`.
+
+    ESPN publishes no timezone, so this is stated in `league.yaml` rather than
+    derived. When that file cannot be read the fallback is used **and said out
+    loud**: a silently assumed zone shifts every waiver deadline by hours while
+    the tool goes on stating them as fact, which is the failure this codebase
+    keeps rediscovering.
+    """
+    try:
+        return load_config(args.config).tzinfo, None
+    except ConfigError as exc:
+        return LEAGUE_TZ, (
+            f"timezone assumed {LEAGUE_TZ.key}: {exc}. "
+            "Waiver deadlines may be hours off"
+        )
+
+
 def _run_log_for(args) -> RunLog:
     """A log that scrubs whatever credentials this invocation has in play.
 
@@ -774,6 +792,9 @@ def _check_body(args, cache: Cache, record: dict) -> int:
     record["week"] = week.week
     record["week_source"] = week.source
 
+    tz, tz_note = _league_timezone(args)
+    record["timezone"] = str(tz)
+
     try:
         schedule_raw = fetch_schedule(args.season, cache)
         schedule = parse_schedule(schedule_raw.text, args.season)
@@ -791,9 +812,12 @@ def _check_body(args, cache: Cache, record: dict) -> int:
         sources.insert(0, SourceHealth("ESPN league", source.age_seconds,
                                        source.stale, source.error))
 
+    if tz_note:
+        sources.append(SourceHealth(tz_note, 0.0, True))
+
     try:
         result = build_check(
-            league, schedule, week, now, sources,
+            league, schedule, week, now, sources, tz=tz,
             look_ahead=not args.no_look_ahead,
         )
     except CheckError as exc:
@@ -811,11 +835,11 @@ def _check_body(args, cache: Cache, record: dict) -> int:
         ],
     )
 
-    for line in render_check(result, LEAGUE_TZ, league.name):
+    for line in render_check(result, tz, league.name):
         print(line)
 
     if args.notify:
-        rc = _deliver(args, result, now, record)
+        rc = _deliver(args, result, now, record, tz)
         if rc is not None:
             return rc
 

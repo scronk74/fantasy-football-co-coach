@@ -14,6 +14,12 @@ teams: 12
 #   ppr       - 1.0 per reception
 scoring: ppr
 
+# The league's own clock. Waiver processing hours and quiet hours are both read
+# in it. ESPN publishes `waiverProcessHour` as a bare integer and NO timezone
+# field anywhere, so this cannot be derived -- and getting it wrong shifts every
+# waiver deadline the tool emits by hours, silently and confidently.
+timezone: America/New_York
+
 # Your draft slot, 1 through <teams>.
 my_pick: 7
 
