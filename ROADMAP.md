@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 495 Python + 53 JS, all green · CI gates both on every PR |
-| **Phase** | **C 7/7, D 3/5, E 1/6.** Detection runs, delivers, does not repeat itself, and now leaves a trace. Next is E2 (launchd, once the iMac lands) and F1 (the Week page, once the draft fills a roster) |
+| **Tests** | 531 Python + 53 JS, all green · CI gates both on every PR |
+| **Phase** | **C 7/7, D 3/5, E 2/6.** Detection runs, delivers, does not repeat itself, leaves a trace, and now reports its own failure. Next is E2 (launchd, once the iMac lands) and F1 (the Week page, once the draft fills a roster) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -122,7 +122,7 @@ flowchart LR
         direction TB
         E1["E1 structured logging<br/>DONE"]:::confirmed
         E2["E2 launchd install"]:::confirmed
-        E3["E3 dead-man switch"]:::confirmed
+        E3["E3 dead-man switch<br/>DONE"]:::confirmed
         E4["E4 delivery failure"]:::confirmed
         E5["E5 ffcoach init"]:::confirmed
         E6["E6 inactives sweep"]:::confirmed
@@ -157,7 +157,7 @@ flowchart LR
     C3 -. gates .-> C4
     B4 -. gates .-> C1
     G2 -. gates .-> G4
-    E1 -. gates .-> E3
+
     F0 -. gates .-> F2
 ```
 
@@ -189,7 +189,7 @@ flowchart LR
 | D5 | Channel bake-off — `ffcoach notify --test` shipped with D1 | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
 | E1 | **Structured run logging** (JSONL + SQLite history) | Done | 🟢 V1 | — | D1 | M | D-021, D-041, **D-062** | ✅ 2026-09-04 |
 | E2 | `launchd` install + per-window scheduling | **Next** | 🟢 V1 | **Sun 09-06** | D1, E1 | **H** | D-022 | ✅ 2026-08-29 |
-| E3 | Dead-man's switch — **unblocked by E1** | Backlog | 🟢 V1 | Week 1 | E1, E2 | M | D-023, R-3 | ✅ 2026-08-29 |
+| E3 | Dead-man's switch (on-host **and** off-host) | Done | 🟢 V1 | — | E1 | M | D-023, R-3, **D-063** | ✅ 2026-09-04 |
 | E4 | Delivery-failure detection + fallback | Backlog | 🟢 V1 | Week 1 | D1, E1 | M | D-024 | ✅ 2026-08-29 |
 | E5 | `ffcoach init` + hardened `doctor` | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
 | E6 | Inactives sweep (~90m pre-kickoff) | Backlog | 🟢 V1 | Week 1 | E2 | M | D-026 | ✅ 2026-08-29 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 1/6 (17%) · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 19/42 steps done (45%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 2/6 (33%) · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 20/42 steps done (48%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -329,6 +329,8 @@ flowchart LR
 
 - **D-062 — The run log wraps the run, and never carries a secret or takes it down.** ✅ *(2026-09-04)*. Three choices inside E1, each of which had an obvious wrong version. **The logging is a `finally` around the whole run, not a line at the end** — the runs worth diagnosing are the ones that crash, and a check that raised and left no trace is precisely the silence E3 must distinguish from a clean week (`_run_check` became a thin wrapper over `_check_body`). **Secrets are scrubbed at any depth**, because the ntfy topic is a credential (D-058), the ESPN cookies authenticate as the user, and a log file is the thing people paste into issues; empty and `None` secrets are dropped, since scrubbing `""` would replace every gap between characters. **A write failure warns and continues** — a full disk must not cost you the alert. `doctor` reports the last run *and*, when it failed, the last success: a recent run proves the scheduler is alive, only a recent success proves it would have told you anything. **This closes E3's prerequisite** — "when did a run last succeed?" now has an answer.
 
+- **D-063 — The dead-man's switch is two halves, and the off-host half is optional but its absence is stated.** ✅ *(2026-09-04)*. The on-host watchdog trips on three consecutive failures (unambiguous, and needs no assumption about the schedule — this is D-023's expired-cookie case) **or** no *successful* run within a configurable window (catches what failures cannot: an unloaded scheduler logs nothing, so there are no failures to count). Measured from the last success rather than the last run, because a machine erroring every fifteen minutes since Thursday is not alive. It cannot catch its own host dying, so `notify/heartbeat.py` GETs an external URL after every successful run and lets **absence** be the signal — a bare URL rather than an integration, since healthchecks.io / Cronitor / Better Stack / Uptime Kuma all accept one, and `fail_url` is never guessed by appending `/fail` (one vendor's convention, silently wrong for the rest). The heartbeat fires regardless of `--notify`: monitoring, not an alert, and suppressing it would fake a dead machine. **When it is unconfigured `doctor` states the exposure** — "if this machine dies, nothing will tell you" — because silence about missing monitoring reads as coverage. Ping URLs join the ntfy topic and ESPN cookies in the run log's redaction set: a forged heartbeat makes a dead machine look alive, which is worse than no monitoring at all. *Affects: E2, R-3.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -342,13 +344,13 @@ flowchart LR
 - **R-1 — ~~No league invite yet.~~ CLOSED 2026-09-03.** League `1076479097`, `espn.yaml` created by the user, `ffcoach league` returns 12 teams with **zero diagnostics** — the hand-written fixture's field names matched live ESPN exactly. `lineupLocktimeType` is `INDIVIDUAL_GAME`, the branch already handled. Historical detail below.
 - **R-1 (historical) — No league invite yet.** *Gates:* verifying the ESPN parser against real data; `espn.yaml`; real league settings; anything running against a live league. **No longer gates C5** — C5 was unblocked by recognizing only the *default* lock value and treating any other as the alternative, so the unverified spelling was never needed. *What must change:* the user is invited and supplies league ID + `espn_s2`/`SWID` cookies. *Why it matters:* `leagues/espn.py` was built against a **hand-written fixture** derived from community docs — tests passing proves internal consistency, **not** that it matches ESPN. Expect field-name corrections. *Who decides:* league commissioner, then user. *Linked:* B1, Q-2.
 - **R-2 — `launchd` correctness is untestable in CI.** *Gates:* confidence in E2/E3. *What must change:* a real install-and-wait-a-day check on the actual iMac. *Why:* the failure mode is silence, which looks identical to success. *Who decides:* user (manual verification). *Linked:* E2, E3.
-- **R-3 — The scheduler and the dead-man's switch share one sleeping iMac.** *(Update 2026-09-03: the user hopes to have a **dedicated always-on iMac** in place over the weekend of 09-05/06, which removes the sleep half of this. It is still a single host, so an off-host heartbeat remains the only thing that catches the machine itself dying — the roadblock narrows rather than closes.)* *(Raised by the 2026-08-31 review.)* *Gates:* whether "never miss a move" is literally true or best-effort. *Why:* a process on that machine cannot warn you while the machine is asleep. Running a missed job on wake only helps if wake precedes the deadline. *What must change:* either an off-host heartbeat, or the promise is restated as best-effort in the product's own copy. *Who decides:* user. *Linked:* E2, E3, D-023.
+- **R-3 — The scheduler and the dead-man's switch share one sleeping iMac.** *(Update 2026-09-03: the user hopes to have a **dedicated always-on iMac** in place over the weekend of 09-05/06, which removes the sleep half of this. It is still a single host, so an off-host heartbeat remains the only thing that catches the machine itself dying — the roadblock narrows rather than closes.)* *(Raised by the 2026-08-31 review.)* *Gates:* whether "never miss a move" is literally true or best-effort. *Why:* a process on that machine cannot warn you while the machine is asleep. Running a missed job on wake only helps if wake precedes the deadline. *What must change:* either an off-host heartbeat, or the promise is restated as best-effort in the product's own copy. **The mechanism now exists** (E3, D-063) — `heartbeat.url` in `notify.yaml`, and `doctor` names the exposure while it is blank. What remains is a *user action*: pick a service and paste a URL. Until that happens the roadblock is open, and the product says so on every `doctor`. *Who decides:* user. *Linked:* E2, E3, D-023.
 
 ## 8. Validation & test-coverage status
 
 | Layer | State |
 |---|---|
-| Unit/integration | 495 Python + 53 JS, all green; offline via committed fixtures |
+| Unit/integration | 531 Python + 53 JS, all green; offline via committed fixtures |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

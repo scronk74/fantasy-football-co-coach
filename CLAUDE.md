@@ -226,6 +226,43 @@ tool generates contains an em dash, so the header form raises `UnicodeEncodeErro
 before anything is sent. A test caught it; the first alert of the season would have
 otherwise.
 
+### The dead-man's switch has two halves, and only one of them can work alone
+
+D-023's case is exact: **expired ESPN cookies produce no alert, which is
+indistinguishable from "nothing is wrong."** Every silent failure has that shape — a
+check that errors sends nothing, and sending nothing is what a clean week looks like. The
+better this product gets at staying quiet, the more dangerous its silence becomes.
+
+**On-host** (`watchdog.py`, pure, always active). Reads the run log after the line is
+written — this run is part of what it must see — and trips on either signal:
+
+- **three failed runs in a row.** Unambiguous, and needs no assumption about the
+  schedule. This is the cookie case.
+- **no *successful* run within `max_silence_hours`.** Catches what failures cannot: a
+  scheduler that was never loaded, or was unloaded, logs nothing at all, so there are no
+  failures to count. Measured from the last **success**, never the last run — a machine
+  erroring every fifteen minutes since Thursday is not alive.
+
+Escalating keys (`watchdog:failing:2`) mean one alert per severity step, so a long outage
+is re-raised as it worsens without being repeated on every scheduler cycle. `_watch` runs
+in a `finally` and swallows its own exceptions: it must never replace the real failure
+with a confusing one.
+
+**Off-host** (`notify/heartbeat.py`, optional). Nothing above survives its own host
+dying: a process on a dead machine reports nothing about the machine being dead. The only
+construction that does is one where **absence is the signal** — ffcoach GETs a URL after
+every successful run and an external service alerts when the pings stop. Deliberately a
+bare URL, not an integration: healthchecks.io, Cronitor, Better Stack and Uptime Kuma all
+accept "GET this to say I am alive". `fail_url` is separate and **never** guessed by
+appending `/fail`, which is one vendor's convention and silently wrong for the others.
+
+The heartbeat fires regardless of `--notify`: it is monitoring, not an alert, and
+suppressing it on a non-notifying run would fake a dead machine. When it is unconfigured
+`doctor` says so as an **exposure** — "if this machine dies, nothing will tell you" —
+because silence about missing monitoring reads as coverage. Ping URLs are credentials
+(a forged heartbeat makes a dead machine look alive) so they are redacted from the run
+log alongside the ntfy topic and the ESPN cookies.
+
 ### Every run leaves a line
 
 `runlog.py` appends one JSON object per `ffcoach check` (D-041: JSONL, because the

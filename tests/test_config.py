@@ -163,3 +163,48 @@ def test_a_guessable_topic_is_refused(tmp_path):
         p = write(tmp_path, f"channel: ntfy\nntfy: {{topic: '{guessable}'}}\n")
         with pytest.raises(ConfigError, match="guessable"):
             load_notify_config(p)
+
+
+# --- E3 config ---
+
+
+def test_watchdog_defaults_are_sane_without_a_watchdog_block(tmp_path):
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n")
+    conf = load_notify_config(p)
+    assert conf.max_silence_hours == 12
+    assert conf.min_consecutive_failures == 3
+    assert conf.has_heartbeat is False
+
+
+def test_a_heartbeat_url_is_read_and_reported_as_configured(tmp_path):
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n"
+                        "heartbeat: {url: 'https://hc-ping.com/abc'}\n")
+    conf = load_notify_config(p)
+    assert conf.has_heartbeat
+    assert conf.heartbeat_url == "https://hc-ping.com/abc"
+    assert conf.heartbeat_fail_url == ""
+
+
+def test_a_single_failure_threshold_is_refused(tmp_path):
+    """One is not a streak. A flaky fetch would page you, and a channel that
+    cries wolf is the one you mute before the week that matters."""
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n"
+                        "watchdog: {min_consecutive_failures: 1}\n")
+    with pytest.raises(ConfigError, match="at least 2"):
+        load_notify_config(p)
+
+
+def test_a_zero_silence_window_is_refused(tmp_path):
+    """It would trip on every run, forever."""
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n"
+                        "watchdog: {max_silence_hours: 0}\n")
+    with pytest.raises(ConfigError, match="must be positive"):
+        load_notify_config(p)
+
+
+def test_a_non_numeric_watchdog_value_is_refused_rather_than_defaulted(tmp_path):
+    """Silently falling back would leave the user believing a value they set."""
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n"
+                        "watchdog: {max_silence_hours: soon}\n")
+    with pytest.raises(ConfigError, match="must be numbers"):
+        load_notify_config(p)

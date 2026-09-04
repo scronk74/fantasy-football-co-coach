@@ -27,12 +27,14 @@ from ffcoach.model.week import (
     resolve_week,
 )
 from ffcoach.notify.base import DeliveryError, Notification
+from ffcoach.notify.heartbeat import Heartbeat
 from ffcoach.notify.history import AlertHistory
 from ffcoach.notify.message import notification_for
 from ffcoach.notify.policy import QuietHours, decide
 from ffcoach.notify.ntfy import ConsoleNotifier, NtfyNotifier
 from ffcoach.report.build import board_payload, league_payload, write_board
 from ffcoach.runlog import RunLog
+from ffcoach.watchdog import WatchdogConfig, assess
 from ffcoach.report.check_text import render_check
 from ffcoach.sources.schedule import ScheduleUnavailable, fetch_schedule, parse_schedule
 from ffcoach.sources.crosswalk import CrosswalkUnavailable, fetch_crosswalk, parse_crosswalk
@@ -383,6 +385,69 @@ def _deliver(args, result, now, outcome: dict) -> int | None:
     return None
 
 
+def _watch(args, run_log: RunLog, ok: bool) -> None:
+    """E3: tell someone when the tool itself has stopped working.
+
+    Never raises. This runs in a `finally`, so an exception here would replace
+    the real failure with a confusing one, and the watchdog reporting an outage
+    badly is worse than the outage.
+    """
+    try:
+        _watch_body(args, run_log, ok)
+    except Exception as exc:  # noqa: BLE001 -- see the docstring
+        print(f"warning: the watchdog itself failed ({exc})", file=sys.stderr)
+
+
+def _watch_body(args, run_log: RunLog, ok: bool) -> None:
+    try:
+        conf = load_notify_config(args.notify_config)
+    except (ConfigError, AttributeError):
+        return
+
+    # Off-host half. Absence of this ping is what tells you the machine died,
+    # so it goes out on every successful run regardless of --notify: it is
+    # monitoring, not an alert, and suppressing it would fake a dead machine.
+    if conf.has_heartbeat:
+        error = Heartbeat(conf.heartbeat_url, conf.heartbeat_fail_url).ping(ok=ok)
+        if error:
+            print(f"warning: {error}", file=sys.stderr)
+
+    if not getattr(args, "notify", False):
+        return
+
+    alert = assess(
+        run_log.tail(50),
+        dt.datetime.now(dt.UTC),
+        WatchdogConfig(
+            max_silence=dt.timedelta(hours=conf.max_silence_hours),
+            min_consecutive_failures=conf.min_consecutive_failures,
+        ),
+    )
+    if alert is None:
+        return
+
+    history = AlertHistory(args.cache)
+    # One send per escalation step. A tripped watchdog is true on every run
+    # until it is fixed, so without this it is the loudest thing you own.
+    if history.counts().get(alert.key):
+        return
+
+    notifier = _notifier(args)
+    if notifier is None:
+        return
+    try:
+        notifier.send(
+            Notification(title="ffcoach is not working", body=alert.reason,
+                         tier="interrupt")
+        )
+    except DeliveryError as exc:
+        print(f"warning: could not report the outage: {exc}", file=sys.stderr)
+        return
+    if notifier.name != "console":
+        history.record([alert.key])
+    print(f"warning: {alert.reason}", file=sys.stderr)
+
+
 def _last_run_lines(run_log: RunLog) -> list[str]:
     """What `doctor` says about the last run, and the last one that worked.
 
@@ -438,6 +503,10 @@ def _run_log_for(args) -> RunLog:
                 getattr(conf, "espn_s2", None),
                 getattr(conf, "swid", None),
                 getattr(conf, "topic", None),
+                # Whoever has the ping URL can forge a heartbeat, which makes
+                # a dead machine look alive -- worse than no monitoring.
+                getattr(conf, "heartbeat_url", None),
+                getattr(conf, "heartbeat_fail_url", None),
             ) if v
         )
     return RunLog(args.log, secrets=secrets)
@@ -466,6 +535,10 @@ def _run_check(args, cache: Cache) -> int:
     finally:
         record["duration_ms"] = round((time.monotonic() - started) * 1000)
         run_log.append(record)
+        # After the line is written, never before: the watchdog reads the log,
+        # and this run is part of what it must see. Both halves run even when
+        # the check itself failed -- a failed check is exactly what E3 is for.
+        _watch(args, run_log, record.get("ok", False))
 
 
 def _check_body(args, cache: Cache, record: dict) -> int:
@@ -599,6 +672,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             notify_conf = load_notify_config(Path("notify.yaml"))
             print(f"Alerts:   {notify_conf.channel} configured ({notify_conf.server})")
+            # Stated as an exposure, not as a missing option. An unconfigured
+            # heartbeat is the difference between "the machine died and I was
+            # told" and "the machine died".
+            print(
+                "Heartbeat: configured (off-host)" if notify_conf.has_heartbeat
+                else "Heartbeat: NOT configured — if this machine dies, "
+                     "nothing will tell you"
+            )
         except ConfigError as exc:
             print(f"Alerts:   not configured — {exc}")
         # The diagnostic payoff of E1: "it has been quiet" and "it has been

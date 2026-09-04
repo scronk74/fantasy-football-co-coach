@@ -100,6 +100,18 @@ class NotifyConfig:
     channel: str
     topic: str = ""
     server: str = "https://ntfy.sh"
+    # E3's off-host half. Empty means no external monitoring at all, and
+    # `doctor` says so rather than letting it look covered -- an unconfigured
+    # heartbeat is the difference between "the machine died and I was told"
+    # and "the machine died".
+    heartbeat_url: str = ""
+    heartbeat_fail_url: str = ""
+    max_silence_hours: float = 12.0
+    min_consecutive_failures: int = 3
+
+    @property
+    def has_heartbeat(self) -> bool:
+        return bool(self.heartbeat_url)
 
 
 def load_notify_config(path: Path) -> NotifyConfig:
@@ -130,10 +142,28 @@ def load_notify_config(path: Path) -> NotifyConfig:
             "no authentication, so use a long random name"
         )
 
+    watch = raw.get("watchdog") or {}
+    try:
+        max_silence = float(watch.get("max_silence_hours", 12))
+        min_failures = int(watch.get("min_consecutive_failures", 3))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{path}: watchdog values must be numbers: {exc}") from exc
+    if max_silence <= 0:
+        raise ConfigError(f"{path}: watchdog.max_silence_hours must be positive")
+    # One is not a streak. A single flaky fetch would page you, and an alert
+    # channel that cries wolf is the one you mute before the week that matters.
+    if min_failures < 2:
+        raise ConfigError(f"{path}: watchdog.min_consecutive_failures must be at least 2")
+
+    beat = raw.get("heartbeat") or {}
     return NotifyConfig(
         channel=channel,
         topic=topic,
         server=str(section.get("server") or "https://ntfy.sh"),
+        heartbeat_url=str(beat.get("url") or "").strip(),
+        heartbeat_fail_url=str(beat.get("fail_url") or "").strip(),
+        max_silence_hours=max_silence,
+        min_consecutive_failures=min_failures,
     )
 
 
