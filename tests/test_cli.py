@@ -1334,3 +1334,233 @@ def test_lan_mode_says_plainly_what_it_exposes(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Anyone on this network can read" in out
     assert "your roster" in out
+
+
+# --- E5: `ffcoach init` and the hardened `doctor` ---
+
+
+def fresh_project():
+    """A directory shaped like a fresh clone: examples only, no real config."""
+    root = Path(__file__).resolve().parent.parent
+    for name in ("league.example.yaml", "espn.example.yaml", "notify.example.yaml"):
+        (Path.cwd() / name).write_text((root / name).read_text())
+    return Path.cwd()
+
+
+def init_args(**over):
+    base = {"config": "league.yaml", "notify_config": Path("notify.yaml"),
+            "espn_config": Path("espn.yaml")}
+    base.update(over)
+    return base
+
+
+def run_init():
+    return main(["init"])
+
+
+def test_init_creates_what_it_can_and_names_what_it_cannot(capsys):
+    """The cookies need a browser. A wizard that stalls there is worse than a
+    checklist that names it."""
+    fresh_project()
+    assert run_init() == 0
+    out = capsys.readouterr().out
+    assert "Created league.yaml" in out
+    assert "Created notify.yaml" in out
+    assert "[ ] espn.yaml" in out
+    assert "paste espn_s2 / SWID from your browser" in out
+
+
+def test_init_is_idempotent(capsys):
+    fresh_project()
+    run_init()
+    before = (Path.cwd() / "notify.yaml").read_text()
+    capsys.readouterr()
+    assert run_init() == 0
+    assert (Path.cwd() / "notify.yaml").read_text() == before
+    assert "Nothing to create" in capsys.readouterr().out
+
+
+def test_init_never_reuses_a_topic_across_projects():
+    fresh_project()
+    run_init()
+    first = (Path.cwd() / "notify.yaml").read_text()
+    (Path.cwd() / "notify.yaml").unlink()
+    run_init()
+    assert (Path.cwd() / "notify.yaml").read_text() != first
+
+
+def test_init_outside_the_project_says_so_rather_than_half_creating(capsys):
+    assert run_init() == 1
+    assert "is this the project directory" in capsys.readouterr().err
+
+
+def test_doctor_lists_the_same_remaining_steps_as_init(capsys):
+    """One list read by both, so "what is missing" and "how do I fix it"
+    cannot drift apart."""
+    fresh_project()
+    run_init()
+    capsys.readouterr()
+    main(["doctor"])
+    out = capsys.readouterr().out
+    assert "Setup: 3 step(s) left" in out
+    assert "espn.yaml" in out
+
+
+def test_a_complete_setup_reports_no_remaining_steps(capsys):
+    fresh_project()
+    run_init()
+    (Path.cwd() / "espn.yaml").write_text("x: 1\n")
+    conf = Path.cwd() / "notify.yaml"
+    conf.write_text(
+        conf.read_text()
+        .replace('url: ""', 'url: "https://hc-ping.com/abc"', 1)
+        .replace('scheduler_host: ""', 'scheduler_host: "somebox"')
+    )
+    capsys.readouterr()
+    assert run_init() == 0
+    assert "Setup looks complete" in capsys.readouterr().out
+
+
+# --- the single-scheduler guard ---
+
+
+GUARDED_YAML = """
+channel: ntfy
+ntfy:
+  topic: "a-long-unguessable-topic-name"
+scheduler_host: "some-other-machine"
+"""
+
+
+def test_a_non_scheduler_machine_does_not_send(checkable, tmp_path, capsys):
+    """Two machines alerting means every alert twice: alert history is a local
+    SQLite file, so the strikes never line up."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(GUARDED_YAML)
+
+    import ffcoach.cli as cli
+
+    sent = []
+
+    class Stub:
+        name = "stub"
+
+        def send(self, notification):
+            sent.append(notification)
+
+    original = cli._notifier
+    cli._notifier = lambda args: Stub()
+    try:
+        code = run_check(checkable, "--notify", "--notify-config", str(conf),
+                         "--log", str(tmp_path / "r.jsonl"))
+    finally:
+        cli._notifier = original
+
+    assert code == 2, "the findings are still real; only the sending is skipped"
+    assert sent == []
+    assert "Not the scheduler" in capsys.readouterr().out
+
+
+def test_a_non_scheduler_machine_does_not_ping_the_heartbeat(checkable, tmp_path):
+    """The dangerous half. A laptop pinging keeps healthchecks green while the
+    scheduler machine is face-down -- E3 defeated by its own mechanism."""
+    import ffcoach.cli as cli
+
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(GUARDED_YAML + '\nheartbeat:\n  url: "https://hc-ping.com/x"\n')
+    pings = []
+
+    class FakeBeat:
+        def __init__(self, url, fail_url=""):
+            pass
+
+        def ping(self, ok=True):
+            pings.append(ok)
+
+    original = cli.Heartbeat
+    cli.Heartbeat = FakeBeat
+    try:
+        run_check(checkable, "--log", str(tmp_path / "r.jsonl"),
+                  "--notify-config", str(conf))
+    finally:
+        cli.Heartbeat = original
+
+    assert pings == []
+
+
+def test_the_scheduler_machine_itself_is_unaffected(checkable, tmp_path):
+    import ffcoach.cli as cli
+    from ffcoach.host import this_host
+
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(GUARDED_YAML.replace("some-other-machine", this_host()))
+    sent = []
+
+    class Stub:
+        name = "stub"
+
+        def send(self, notification):
+            sent.append(notification)
+
+    original = cli._notifier
+    cli._notifier = lambda args: Stub()
+    try:
+        run_check(checkable, "--notify", "--notify-config", str(conf),
+                  "--log", str(tmp_path / "r.jsonl"))
+    finally:
+        cli._notifier = original
+
+    assert sent
+
+
+def test_the_suppressed_host_is_recorded_in_the_run_log(checkable, tmp_path):
+    """"Nothing was sent" and "nothing needed sending" must not look alike."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(GUARDED_YAML)
+    log = tmp_path / "runs.jsonl"
+    run_check(checkable, "--notify", "--notify-config", str(conf), "--log", str(log))
+    assert read_log(log)[0]["suppressed_host"]
+
+
+def test_install_records_this_machine_as_the_scheduler(tmp_path, on_macos):
+    """A guard nobody remembers to set is not a guard."""
+    import ffcoach.cli as cli
+    from ffcoach.config import load_notify_config
+    from ffcoach.host import this_host
+
+    conf = Path.cwd() / "notify.yaml"
+    fresh_project()
+    run_init()
+
+    class FakeServer:
+        pass
+
+    original_lc, original_path = cli._launchctl, cli.agent_plist_path
+    cli._launchctl = lambda *a: (0, "")
+    cli.agent_plist_path = lambda home=None: tmp_path / "agent.plist"
+    (Path.cwd() / "espn.yaml").write_text("x: 1\n")
+    try:
+        assert main(["schedule", "--install"]) == 0
+    finally:
+        cli._launchctl, cli.agent_plist_path = original_lc, original_path
+
+    assert load_notify_config(conf).scheduler_host == this_host()
+
+
+def test_no_claim_leaves_the_host_alone(tmp_path, on_macos):
+    import ffcoach.cli as cli
+    from ffcoach.config import load_notify_config
+
+    fresh_project()
+    run_init()
+    (Path.cwd() / "espn.yaml").write_text("x: 1\n")
+
+    original_lc, original_path = cli._launchctl, cli.agent_plist_path
+    cli._launchctl = lambda *a: (0, "")
+    cli.agent_plist_path = lambda home=None: tmp_path / "agent.plist"
+    try:
+        main(["schedule", "--install", "--no-claim"])
+    finally:
+        cli._launchctl, cli.agent_plist_path = original_lc, original_path
+
+    assert load_notify_config(Path.cwd() / "notify.yaml").scheduler_host == ""

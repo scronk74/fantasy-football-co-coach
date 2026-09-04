@@ -46,7 +46,8 @@ uv run ffcoach build             # fetch data -> web/data/board.json
 uv run ffcoach league            # ESPN league/rosters -> web/data/league.json
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # no ESPN access needed
 uv run ffcoach refresh           # populate the cache only
-uv run ffcoach doctor            # config, cache, alert channel, last run
+uv run ffcoach init              # create the config files, list what is still missing
+uv run ffcoach doctor            # config, cache, alert channel, last run, remaining setup
 uv run ffcoach serve             # pages at http://127.0.0.1:8765/
 uv run ffcoach serve --lan       # ...reachable from other devices (opt-in)
 uv run ffcoach schedule --print  # the launchd plist, without installing it
@@ -250,6 +251,35 @@ One trap already paid for: ntfy is published as **JSON to the server root**, not
 tool generates contains an em dash, so the header form raises `UnicodeEncodeError`
 before anything is sent. A test caught it; the first alert of the season would have
 otherwise.
+
+### One machine alerts, and the other one says so
+
+`host.py` answers "is this the machine that is supposed to be alerting?", and the guard
+exists because of a failure that is silent in both directions:
+
+- **Two machines alerting sends everything twice.** Alert history is a local SQLite file,
+  so the two-strike counts never line up.
+- **Worse: a laptop that checks even occasionally keeps the heartbeat green while the
+  scheduler machine is face-down.** That is E3 defeated by its own mechanism — the
+  dead-man's switch cannot tell "the iMac is fine" from "the laptop pinged for it".
+
+`notify.yaml`'s `scheduler_host` is **empty by default** — one machine is the common case,
+and a guard you must configure before anything works buys nothing until a second machine
+exists. `ffcoach schedule --install` records the host automatically, because the moment a
+scheduler exists is exactly the moment a second machine becomes dangerous, and a guard
+nobody remembers to set is not a guard.
+
+A non-scheduler run **still checks and still writes the page**; it only declines to send
+and to ping, and it says so on stdout and in the run log. Hostnames are normalised before
+comparison: macOS returns `MacBook-Air.local` on one network and `MacBook-Air` on another,
+and a guard that fires after a Wi-Fi change is a guard that gets deleted.
+
+### Setup is a checklist, and both commands read the same one
+
+`_setup_steps()` returns `(done, what, how to fix it)` and is rendered by **both**
+`ffcoach init` and `ffcoach doctor`, so "what is missing" and "how do I fix it" cannot
+drift apart. `init` creates what it can and names what it cannot: the ESPN cookies need a
+browser, and a wizard that stalls there is worse than a checklist that names the step.
 
 ### `ffcoach serve` is rooted at `web/`, and that is the point
 

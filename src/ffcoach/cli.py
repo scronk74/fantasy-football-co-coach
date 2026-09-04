@@ -19,12 +19,15 @@ from ffcoach.agent import (
 from ffcoach.advisors.draft import build_board
 from ffcoach.cache import Cache
 from ffcoach.check import LEAGUE_TZ, CheckError, SourceHealth, build_check
+from ffcoach.host import is_scheduler_host, normalize_host, this_host
 from ffcoach.config import (
     ConfigError,
     load_config,
     load_espn_credentials,
     load_notify_config,
     new_topic,
+    set_scheduler_host,
+    write_notify_config,
     write_notify_config,
 )
 from ffcoach.leagues.espn import parse_league
@@ -86,6 +89,7 @@ def _parser() -> argparse.ArgumentParser:
         ("notify", "check the notification channel itself"),
         ("schedule", "run the check automatically via launchd"),
         ("serve", "serve the pages over HTTP"),
+        ("init", "create the config files and say what is still missing"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--config", default="league.yaml", type=Path)
@@ -181,9 +185,14 @@ def _parser() -> argparse.ArgumentParser:
                                help="print the plist without writing anything")
             p.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_MINUTES,
                            help="minutes between checks (5-240)")
-            p.add_argument("--log", default=Path(".ffcoach-runs.jsonl"), type=Path)
-        if name in ("check", "notify"):
+            p.add_argument("--no-claim", action="store_true",
+                           help="do not record this machine as the alerting host")
             p.add_argument("--notify-config", default=Path("notify.yaml"), type=Path)
+            p.add_argument("--log", default=Path(".ffcoach-runs.jsonl"), type=Path)
+        if name in ("check", "notify", "init", "doctor"):
+            p.add_argument("--notify-config", default=Path("notify.yaml"), type=Path)
+        if name in ("init", "doctor"):
+            p.add_argument("--espn-config", default=Path("espn.yaml"), type=Path)
         if name == "league":
             p.add_argument("--out", default=Path("web/data/league.json"), type=Path)
         if name in ("league", "check"):
@@ -347,6 +356,27 @@ EXIT_ACTIONABLE = 2       # something you can still fix
 EXIT_INCOMPLETE = 3       # nothing actionable, but this run was not a clean look
 
 
+def _may_alert(args, outcome: dict, what: str) -> bool:
+    """Whether this machine is the one allowed to alert.
+
+    Skipping is announced, never silent. "Nothing was sent" and "nothing needed
+    sending" must not look alike -- that confusion is the whole reason the
+    dead-man's switch exists.
+    """
+    try:
+        conf = load_notify_config(args.notify_config)
+    except (ConfigError, AttributeError):
+        return True  # the channel check reports a missing config properly
+    if is_scheduler_host(conf.scheduler_host):
+        return True
+    outcome["suppressed_host"] = this_host()
+    print(
+        f"Not the scheduler, so this run will not {what}. "
+        f"notify.yaml names {conf.scheduler_host!r}; this machine is {this_host()!r}."
+    )
+    return False
+
+
 def _notifier(args):
     """The configured channel, or `None` after printing why not.
 
@@ -395,6 +425,96 @@ def _current_agent(args):
             "launchd has no PATH of its own and would fail silently."
         )
     return build_agent(Path.cwd(), Path(uv), args.interval)
+
+
+def _setup_steps(args) -> list[tuple[bool, str, str]]:
+    """`(done, what, how to fix it)` for each thing setup needs.
+
+    One list, read by both `init` and `doctor`, so "what is missing" and "how
+    do I fix it" cannot drift apart. D-025: this has to be clonable by someone
+    who is not me, and the second machine is the first test of that.
+    """
+    steps: list[tuple[bool, str, str]] = []
+
+    league_ok = Path(args.config).exists()
+    steps.append((league_ok, f"{args.config} — league settings",
+                  "uv run ffcoach init"))
+
+    # The one step nobody else can do: these cookies authenticate as you, and
+    # they come out of your own browser's dev tools.
+    espn_ok = Path(args.espn_config).exists()
+    steps.append((espn_ok, f"{args.espn_config} — ESPN session cookies",
+                  "copy espn.example.yaml and paste espn_s2 / SWID from your browser"))
+
+    notify_ok = Path(args.notify_config).exists()
+    steps.append((notify_ok, f"{args.notify_config} — where alerts go",
+                  "uv run ffcoach notify --init"))
+
+    if notify_ok:
+        try:
+            conf = load_notify_config(args.notify_config)
+        except ConfigError:
+            conf = None
+        if conf is not None:
+            steps.append((conf.has_heartbeat,
+                          "off-host heartbeat — tells you when this machine dies",
+                          "add heartbeat.url (healthchecks.io free tier)"))
+            steps.append((bool(conf.scheduler_host),
+                          "scheduler host recorded — stops a second machine "
+                          "double-alerting and faking the heartbeat",
+                          "uv run ffcoach schedule --install"))
+    return steps
+
+
+def _run_init(args) -> int:
+    """Create what can be created, then say exactly what remains.
+
+    Deliberately not interactive. The one step that cannot be automated -- the
+    ESPN cookies -- needs a browser, and a wizard that stalls on it is worse
+    than a checklist that names it.
+    """
+    created: list[str] = []
+
+    if not Path(args.config).exists():
+        example = Path("league.example.yaml")
+        if example.exists():
+            Path(args.config).write_text(example.read_text())
+            created.append(str(args.config))
+        else:
+            print(f"error: {example} is missing; is this the project directory?",
+                  file=sys.stderr)
+            return EXIT_ERROR
+
+    if not Path(args.notify_config).exists():
+        try:
+            write_notify_config(args.notify_config, new_topic())
+            created.append(str(args.notify_config))
+        except (ConfigError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+
+    for path in created:
+        print(f"Created {path}")
+    if not created:
+        print("Nothing to create — every config file already exists.")
+    print()
+
+    steps = _setup_steps(args)
+    remaining = [s for s in steps if not s[0]]
+    for done, what, fix in steps:
+        print(f"  [{'x' if done else ' '}] {what}")
+        if not done:
+            print(f"        -> {fix}")
+    print()
+    if remaining:
+        print(f"{len(remaining)} step(s) left. Re-run `ffcoach init` to re-check.")
+    else:
+        print("Setup looks complete. Try: uv run ffcoach check")
+    if str(args.notify_config) in created:
+        print()
+        print("Your ntfy topic is in notify.yaml — subscribe to it in the app,")
+        print("then run `uv run ffcoach notify --test`. Treat it as a credential.")
+    return EXIT_ALL_CLEAR
 
 
 def _run_serve(args) -> int:
@@ -488,14 +608,41 @@ def _run_schedule(args) -> int:
               file=sys.stderr)
         return EXIT_ERROR
 
+    claimed = _claim_scheduler_host(args)
+
     print(f"Scheduled: every {agent.interval_minutes} minutes, starting now.")
     print(f"  plist    {path}")
     print(f"  runs in  {agent.working_dir}")
     print(f"  stderr   {agent.stderr_path}")
+    if claimed:
+        print(f"  host     {claimed} — from now on, only this machine alerts")
     print()
     print("It will run once immediately (RunAtLoad). Check with:")
     print("  uv run ffcoach schedule --status")
     return EXIT_ALL_CLEAR
+
+
+def _claim_scheduler_host(args) -> str | None:
+    """Record this machine as the one that alerts, returning it if changed.
+
+    Done here rather than left to the user: the moment a scheduler exists is
+    exactly the moment a second machine becomes dangerous, and a guard nobody
+    remembers to set is not a guard. `--no-claim` opts out.
+    """
+    if getattr(args, "no_claim", False):
+        return None
+    try:
+        conf = load_notify_config(args.notify_config)
+    except ConfigError:
+        return None
+    if conf.scheduler_host and is_scheduler_host(conf.scheduler_host):
+        return None  # already this machine
+    try:
+        set_scheduler_host(args.notify_config, this_host())
+    except ConfigError as exc:
+        print(f"warning: could not record the scheduler host: {exc}", file=sys.stderr)
+        return None
+    return this_host()
 
 
 def _schedule_uninstall() -> int:
@@ -582,6 +729,9 @@ def _deliver(args, result, now, outcome: dict, tz) -> int | None:
     before a send would spend a strike on a message that never arrived, and the
     second strike is the one that lands ninety minutes before kickoff.
     """
+    if not _may_alert(args, outcome, "send alerts"):
+        return None
+
     notifier = _notifier(args)
     if notifier is None:
         return EXIT_ERROR
@@ -655,7 +805,10 @@ def _watch_body(args, run_log: RunLog, ok: bool) -> None:
     # Off-host half. Absence of this ping is what tells you the machine died,
     # so it goes out on every successful run regardless of --notify: it is
     # monitoring, not an alert, and suppressing it would fake a dead machine.
-    if conf.has_heartbeat:
+    # ...unless this is not the scheduler. Then pinging is *itself* the way to
+    # fake a dead machine: the heartbeat would stay green off the laptop while
+    # the iMac was face-down, which is E3 defeated by its own mechanism.
+    if conf.has_heartbeat and is_scheduler_host(conf.scheduler_host):
         error = Heartbeat(conf.heartbeat_url, conf.heartbeat_fail_url).ping(ok=ok)
         if error:
             print(f"warning: {error}", file=sys.stderr)
@@ -982,6 +1135,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         return _run_serve(args)
 
+    if args.command == "init":
+        return _run_init(args)
+
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -996,7 +1152,7 @@ def main(argv: list[str] | None = None) -> int:
         # Whether alerts have somewhere to go, never where. The topic is the
         # credential, and `doctor` output is what gets pasted into a bug report.
         try:
-            notify_conf = load_notify_config(Path("notify.yaml"))
+            notify_conf = load_notify_config(args.notify_config)
             print(f"Alerts:   {notify_conf.channel} configured ({notify_conf.server})")
             # Stated as an exposure, not as a missing option. An unconfigured
             # heartbeat is the difference between "the machine died and I was
@@ -1006,12 +1162,29 @@ def main(argv: list[str] | None = None) -> int:
                 else "Heartbeat: NOT configured — if this machine dies, "
                      "nothing will tell you"
             )
+            if notify_conf.scheduler_host:
+                mine = is_scheduler_host(notify_conf.scheduler_host)
+                print(
+                    f"Scheduler: {notify_conf.scheduler_host}"
+                    + ("  (this machine)" if mine else
+                       f"  — this is {this_host()}, so it will NOT alert or ping")
+                )
+            else:
+                print("Scheduler: not recorded — any machine here may alert")
         except ConfigError as exc:
             print(f"Alerts:   not configured — {exc}")
         # The diagnostic payoff of E1: "it has been quiet" and "it has been
         # broken since Thursday" look identical without this.
         for line in _last_run_lines(RunLog(Path(".ffcoach-runs.jsonl"))):
             print(line)
+
+        missing = [s for s in _setup_steps(args) if not s[0]]
+        if missing:
+            print()
+            print(f"Setup: {len(missing)} step(s) left")
+            for _, what, fix in missing:
+                print(f"  [ ] {what}")
+                print(f"      -> {fix}")
         return 0
 
     try:

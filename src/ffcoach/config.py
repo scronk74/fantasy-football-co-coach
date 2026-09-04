@@ -124,6 +124,10 @@ class NotifyConfig:
     heartbeat_fail_url: str = ""
     max_silence_hours: float = 12.0
     min_consecutive_failures: int = 3
+    # Which machine is allowed to send alerts and ping the heartbeat. Empty
+    # means "any", which is right until a second machine exists. See
+    # `ffcoach.host` for why this matters more than it looks.
+    scheduler_host: str = ""
 
     @property
     def has_heartbeat(self) -> bool:
@@ -163,6 +167,16 @@ heartbeat:
   # Optional. Never guessed from `url`: appending "/fail" is one vendor's
   # convention and silently wrong for the others.
   fail_url: ""
+
+# The one machine allowed to send alerts and ping the heartbeat. Set
+# automatically by `ffcoach schedule --install`.
+#
+# Leave it blank while you have one machine. Once a second one exists, an
+# unguarded setup sends every alert twice -- alert history is a local file --
+# and, far worse, a laptop that checks occasionally keeps the heartbeat green
+# while the scheduler machine is face-down. A run from any other host still
+# checks and still writes the page; it just does not send or ping.
+scheduler_host: ""
 """
 
 
@@ -247,6 +261,7 @@ def load_notify_config(path: Path) -> NotifyConfig:
         heartbeat_fail_url=str(beat.get("fail_url") or "").strip(),
         max_silence_hours=max_silence,
         min_consecutive_failures=min_failures,
+        scheduler_host=str(raw.get("scheduler_host") or "").strip(),
     )
 
 
@@ -295,3 +310,29 @@ def load_config(path: Path) -> LeagueConfig:
         roster={str(k): int(v) for k, v in roster.items()},
         timezone=timezone,
     )
+
+
+def set_scheduler_host(path: Path, host: str) -> None:
+    """Record which machine runs the scheduler, in place.
+
+    A line edit rather than a YAML round-trip: rewriting the file through
+    `yaml.dump` would strip every comment, and this config is mostly comments
+    explaining what each knob costs if you get it wrong.
+    """
+    path = Path(path)
+    try:
+        lines = path.read_text().splitlines()
+    except OSError as exc:
+        raise ConfigError(f"could not read {path}: {exc}") from exc
+
+    replacement = f'scheduler_host: "{host}"'
+    for index, line in enumerate(lines):
+        if line.strip().startswith("scheduler_host:"):
+            lines[index] = replacement
+            break
+    else:
+        lines.append("")
+        lines.append("# Set by `ffcoach schedule --install`.")
+        lines.append(replacement)
+
+    path.write_text("\n".join(lines) + "\n")
