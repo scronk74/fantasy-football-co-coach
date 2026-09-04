@@ -8,6 +8,14 @@ import sys
 import time
 from pathlib import Path
 
+from ffcoach.agent import (
+    DEFAULT_INTERVAL_MINUTES,
+    LABEL,
+    AgentError,
+    agent_plist_path,
+    build_agent,
+    plist_bytes,
+)
 from ffcoach.advisors.draft import build_board
 from ffcoach.cache import Cache
 from ffcoach.check import LEAGUE_TZ, CheckError, SourceHealth, build_check
@@ -62,6 +70,7 @@ def _parser() -> argparse.ArgumentParser:
         ("league", "fetch ESPN league/roster data and write web/data/league.json"),
         ("check", "report whether this week's lineup needs fixing"),
         ("notify", "check the notification channel itself"),
+        ("schedule", "run the check automatically via launchd"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--config", default="league.yaml", type=Path)
@@ -120,6 +129,19 @@ def _parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="send one test message, to prove the channel works before you rely on it",
             )
+        if name == "schedule":
+            group = p.add_mutually_exclusive_group(required=True)
+            group.add_argument("--install", action="store_true",
+                               help="write the launchd agent and load it")
+            group.add_argument("--uninstall", action="store_true",
+                               help="unload the agent and remove it")
+            group.add_argument("--status", action="store_true",
+                               help="is it loaded, and when did it last run")
+            group.add_argument("--print", dest="print_only", action="store_true",
+                               help="print the plist without writing anything")
+            p.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_MINUTES,
+                           help="minutes between checks (5-240)")
+            p.add_argument("--log", default=Path(".ffcoach-runs.jsonl"), type=Path)
         if name in ("check", "notify"):
             p.add_argument("--notify-config", default=Path("notify.yaml"), type=Path)
         if name == "league":
@@ -305,6 +327,141 @@ def _notifier(args):
     except DeliveryError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return None
+
+
+def _launchctl(*argv: str) -> tuple[int, str]:
+    """Run `launchctl`, returning its code and combined output.
+
+    Isolated so the tests can replace exactly one function. Everything above it
+    -- the plist, the validation, the messages -- is verifiable; this call is
+    the part R-2 says never can be.
+    """
+    import subprocess
+
+    proc = subprocess.run(
+        ["launchctl", *argv], capture_output=True, text=True, check=False
+    )
+    return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+
+def _current_agent(args):
+    """Build the agent for this working directory, or explain why not."""
+    import shutil
+
+    uv = shutil.which("uv")
+    if uv is None:
+        raise AgentError(
+            "uv is not on PATH here, so its absolute path cannot be recorded. "
+            "launchd has no PATH of its own and would fail silently."
+        )
+    return build_agent(Path.cwd(), Path(uv), args.interval)
+
+
+def _is_macos() -> bool:
+    """Its own function so the tests can stub it.
+
+    CI runs on Linux, and gating on `sys.platform` inline meant every branch
+    below was unreachable there -- the whole command would have been covered
+    only on the author's laptop. That is the same gap R-2 already regrets about
+    `launchctl`, and there is no reason to widen it to code that is perfectly
+    testable anywhere.
+    """
+    return sys.platform == "darwin"
+
+
+def _run_schedule(args) -> int:
+    if not _is_macos() and not args.print_only:
+        # cron is not an acceptable substitute (D-022) and pretending otherwise
+        # would ship a scheduler that skips every job missed during sleep.
+        print("error: launchd is macOS-only; this machine is not macOS.",
+              file=sys.stderr)
+        return EXIT_ERROR
+
+    if args.status:
+        return _schedule_status(args)
+
+    if args.uninstall:
+        return _schedule_uninstall()
+
+    try:
+        agent = _current_agent(args)
+    except AgentError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    if args.print_only:
+        sys.stdout.write(plist_bytes(agent).decode())
+        return EXIT_ALL_CLEAR
+
+    path = agent_plist_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(plist_bytes(agent))
+    except OSError as exc:
+        print(f"error: could not write {path}: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    # bootout first, so re-installing after an edit actually takes effect
+    # rather than leaving the old definition loaded. Its failure is expected
+    # and ignored: nothing is loaded on a first install.
+    _launchctl("bootout", agent.service_target)
+    code, output = _launchctl("bootstrap", agent.domain_target, str(path))
+    if code != 0:
+        print(f"error: launchctl bootstrap failed: {output}", file=sys.stderr)
+        print(f"note: the plist is written at {path}; nothing is scheduled.",
+              file=sys.stderr)
+        return EXIT_ERROR
+
+    print(f"Scheduled: every {agent.interval_minutes} minutes, starting now.")
+    print(f"  plist    {path}")
+    print(f"  runs in  {agent.working_dir}")
+    print(f"  stderr   {agent.stderr_path}")
+    print()
+    print("It will run once immediately (RunAtLoad). Check with:")
+    print("  uv run ffcoach schedule --status")
+    return EXIT_ALL_CLEAR
+
+
+def _schedule_uninstall() -> int:
+    import os
+
+    path = agent_plist_path()
+    code, output = _launchctl("bootout", f"gui/{os.getuid()}/{LABEL}")
+    path.unlink(missing_ok=True)
+    if code != 0 and "No such process" not in output:
+        print(f"warning: launchctl bootout said: {output}", file=sys.stderr)
+    print(f"Unscheduled. Removed {path}.")
+    return EXIT_ALL_CLEAR
+
+
+def _schedule_status(args) -> int:
+    """Loaded, and did it actually do anything.
+
+    Both, deliberately, and for the same reason `doctor` reports two lines: a
+    loaded agent proves launchd accepted the plist, and proves nothing at all
+    about whether the job runs, succeeds, or reaches your phone. R-2 is exactly
+    the gap between those two facts.
+    """
+    import os
+
+    path = agent_plist_path()
+    print(f"Plist:    {path}{'' if path.exists() else '  (absent)'}")
+
+    code, output = _launchctl("print", f"gui/{os.getuid()}/{LABEL}")
+    if code != 0:
+        print("Loaded:   no — nothing is scheduled")
+    else:
+        state = next(
+            (ln.strip() for ln in output.splitlines() if ln.strip().startswith("state =")),
+            "state = unknown",
+        )
+        print(f"Loaded:   yes ({state})")
+
+    for line in _last_run_lines(RunLog(args.log)):
+        print(line)
+    if code == 0 and not RunLog(args.log).tail(1):
+        print("note: loaded but nothing has run yet — check the stderr log.")
+    return EXIT_ALL_CLEAR
 
 
 def _run_notify(args) -> int:
@@ -704,6 +861,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "notify":
         return _run_notify(args)
+
+    if args.command == "schedule":
+        return _run_schedule(args)
 
     try:
         config = load_config(args.config)
