@@ -52,6 +52,7 @@ from ffcoach.report.build import (
     write_board,
 )
 from ffcoach.runlog import RunLog
+from ffcoach.health import health_payload, plist_present
 from ffcoach.serve import (
     ALL_INTERFACES,
     DEFAULT_PORT,
@@ -161,6 +162,23 @@ def _parser() -> argparse.ArgumentParser:
             )
         if name == "serve":
             p.add_argument("--port", type=int, default=DEFAULT_PORT)
+            # The refresh button runs a real check, so `serve` needs every
+            # argument `check` does -- and the same defaults, or the button
+            # would quietly check something other than what the CLI checks.
+            p.add_argument("--espn-config", default=Path("espn.yaml"), type=Path)
+            p.add_argument("--notify-config", default=Path("notify.yaml"), type=Path)
+            p.add_argument("--log", default=Path(".ffcoach-runs.jsonl"), type=Path)
+            p.add_argument("--out", default=Path("web/data/check.json"), type=Path)
+            p.add_argument("--season", type=int, default=dt.date.today().year)
+            p.add_argument("--fixture", type=Path, default=None)
+            p.add_argument("--my-swid", default=None)
+            p.add_argument("--now", default=None)
+            p.add_argument("--no-look-ahead", action="store_true")
+            p.add_argument("--no-write", action="store_true")
+            p.add_argument("--notify", action="store_true",
+                           help="let the refresh button send alerts too")
+            p.add_argument("--dry-run", action="store_true")
+            p.add_argument("--ignore-quiet-hours", action="store_true")
             p.add_argument(
                 "--lan",
                 action="store_true",
@@ -517,12 +535,61 @@ def _run_init(args) -> int:
     return EXIT_ALL_CLEAR
 
 
+def _serve_health(args):
+    """Built per request. A cached health panel is a contradiction."""
+    return health_payload(
+        args.log,
+        args.notify_config,
+        dt.datetime.now(dt.UTC),
+        plist_exists=plist_present(),
+        agent_loaded=_agent_loaded(),
+        setup_steps=_setup_steps(args),
+    )
+
+
+def _agent_loaded() -> bool | None:
+    """Whether launchd has the agent, or `None` when we cannot tell.
+
+    `None` renders as unknown rather than as healthy: a panel that says "yes"
+    because it failed to ask is the failure this whole page is against.
+    """
+    if not _is_macos():
+        return None
+    import os
+
+    try:
+        code, _ = _launchctl("print", f"gui/{os.getuid()}/{LABEL}")
+    except OSError:
+        return None
+    return code == 0
+
+
+def _serve_refresh(args):
+    """Run a check on demand, in-process. Returns `(ok, message)`."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    buffer = io.StringIO()
+    try:
+        # Output is captured rather than printed: the person who pressed the
+        # button is looking at a browser, not at this terminal.
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            code = _run_check(args, Cache(args.cache))
+    except Exception as exc:  # noqa: BLE001 -- a handler must not die with it
+        return False, f"{type(exc).__name__}: {exc}"
+    return code != EXIT_ERROR, f"check finished (exit {code})"
+
+
 def _run_serve(args) -> int:
     """Serve `web/` until interrupted."""
     try:
         root = web_root()
         host = ALL_INTERFACES if args.lan else LOCALHOST
-        server = build_server(root, host, args.port)
+        server = build_server(
+            root, host, args.port,
+            health=lambda: _serve_health(args),
+            refresh=lambda: _serve_refresh(args),
+        )
     except ServeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR

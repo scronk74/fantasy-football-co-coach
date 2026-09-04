@@ -10,6 +10,7 @@ export const PAGES = [
   { id: "week", label: "This Week", href: "index.html" },
   { id: "league", label: "My League", href: "league.html" },
   { id: "draft", label: "Draft Board", href: "draft.html" },
+  { id: "health", label: "Health", href: "health.html" },
 ];
 
 export function navHtml(currentPageId) {
