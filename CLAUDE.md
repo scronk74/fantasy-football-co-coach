@@ -37,6 +37,7 @@ uv run ffcoach notify --test     # prove alerts reach your phone before relying 
 uv run ffcoach check             # this week's lineup: what to fix, by when
 uv run ffcoach check --notify    # ...and send it
 uv run ffcoach check --notify --dry-run   # ...and print what it would have sent
+uv run ffcoach check --notify --ignore-quiet-hours   # ...even at 3am
 uv run ffcoach check --fixture tests/fixtures/espn_league.json \
       --my-swid '{ABCDEF12-3456-7890-ABCD-EF1234567890}' --season 2025 \
       --now 2025-10-01T09:00-04:00        # the whole decision, offline
@@ -224,6 +225,47 @@ One trap already paid for: ntfy is published as **JSON to the server root**, not
 tool generates contains an em dash, so the header form raises `UnicodeEncodeError`
 before anything is sent. A test caught it; the first alert of the season would have
 otherwise.
+
+### Repeats: two strikes, and the second one is spent late
+
+`notify/policy.py` is pure and answers the question detection cannot: the same finding
+appears on **every** run until it is fixed, and a scheduler runs the check many times an
+hour. Without it, "alert on actionable findings" means "alert every fifteen minutes
+until Sunday".
+
+**Quiet hours defer, they never drop** (D-018). Nothing is queued — the problem is still
+on the roster, so the next run after 08:00 finds it again. That is D-019's "the roster is
+the acknowledgment" applied to deferral. The exception: **quiet hours yield to a deadline
+that falls inside them.** Holding past the last moment something could be acted on
+produces silence indistinguishable from a clean week.
+
+**Two strikes, then nothing** (D-019). The exception is *when* strike two is spent —
+inside a three-hour last-call window before the deadline, not on the next run. Two
+constants guard it, and the second was found by a test rather than by reasoning:
+
+- `LAST_CALL` (3h) — the reminder waits until it is useful.
+- `MIN_GAP` (45m) — **and waits for air after strike one.** Without this, a problem
+  first seen *inside* the last-call window burns both strikes in one scheduler cycle
+  and then goes quiet for the three hours that mattered.
+
+Three ordering rules that are load-bearing:
+
+- **Decide, send, then record.** Recording first spends a strike on a message that never
+  arrived, and strike two is the one that lands ninety minutes before kickoff. A failed
+  delivery records nothing, so the next run retries.
+- **A dry run records nothing.** It delivered nothing, so it must not count as having
+  told you.
+- **`AlertHistory` takes the check's clock, not the wall clock.** With `--now` they
+  differ, and every "how long since the last alert" comparison is then between a
+  simulated instant and a real one — wrong everywhere the flag is used, invisible in
+  production where the two agree.
+
+History lives in the same SQLite file as the cache (D-041) in its own `alerts` table,
+**not** via `Cache`: a TTL store's whole contract is that entries expire, and an expired
+alert record hands a fixed problem a fresh pair of strikes.
+
+Every held alert prints its reason. A suppressed alert is a decision, and a decision
+nobody can see is a bug report waiting to happen.
 
 ### Deadlines: the kind of fix comes before the time
 

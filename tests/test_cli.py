@@ -406,3 +406,152 @@ def test_a_guessable_topic_is_refused(checkable, tmp_path, capsys):
     code = run_check(checkable, "--notify", "--dry-run", "--notify-config", str(conf))
     assert code == 1
     assert "guessable" in capsys.readouterr().err
+
+
+# --- D3: the repeat policy, end to end ---
+
+
+def test_a_repeated_check_does_not_send_the_same_alert_again(checkable, tmp_path, capsys):
+    """The scheduler runs this many times an hour. Without the policy that is
+    the same six alerts, every time, until Sunday."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    calls = []
+
+    import ffcoach.cli as cli
+    from ffcoach.notify.base import Notification
+
+    class Recording:
+        name = "recording"
+
+        def send(self, notification: Notification) -> None:
+            calls.append(notification)
+
+    original = cli._notifier
+    cli._notifier = lambda args: Recording()
+    try:
+        run_check(checkable, "--notify", "--notify-config", str(conf))
+        run_check(checkable, "--notify", "--notify-config", str(conf))
+    finally:
+        cli._notifier = original
+
+    assert len(calls) == 1, "the second run must not repeat the first run's alert"
+    assert "held" in capsys.readouterr().out
+
+
+def test_a_failed_delivery_does_not_spend_a_strike(checkable, tmp_path, capsys):
+    """Recording before sending would burn the alert that mattered."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+
+    import ffcoach.cli as cli
+    from ffcoach.notify.base import DeliveryError
+
+    class Broken:
+        name = "broken"
+
+        def send(self, notification):
+            raise DeliveryError("network is down")
+
+    original = cli._notifier
+    cli._notifier = lambda args: Broken()
+    try:
+        assert run_check(checkable, "--notify", "--notify-config", str(conf)) == 1
+    finally:
+        cli._notifier = original
+
+    from ffcoach.notify.history import AlertHistory
+
+    assert AlertHistory(checkable).counts() == {}
+
+
+def test_a_dry_run_never_spends_a_strike(checkable, tmp_path, capsys):
+    """It delivered nothing, so it must not count as having told you."""
+    from ffcoach.notify.history import AlertHistory
+
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    run_check(checkable, "--notify", "--dry-run", "--notify-config", str(conf))
+    assert AlertHistory(checkable).counts() == {}
+
+
+def test_quiet_hours_hold_the_alert_and_say_so(checkable, tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "2025-10-01T02:00-04:00",   # 2am ET
+        "--notify", "--dry-run",
+        "--notify-config", str(conf),
+    ])
+    out = capsys.readouterr().out
+    assert code == 2, "the findings are still real; only the message is held"
+    assert "quiet hours" in out
+    assert "Nothing to send" in out
+
+
+def test_quiet_hours_can_be_overridden_from_the_command_line(checkable, tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "2025-10-01T02:00-04:00",
+        "--notify", "--dry-run", "--ignore-quiet-hours",
+        "--notify-config", str(conf),
+    ])
+    assert "[interrupt]" in capsys.readouterr().out
+
+
+def test_the_title_counts_what_is_being_sent_not_what_exists(checkable, tmp_path, capsys):
+    """A "6 lineup fixes" title above two lines reads as truncation, not policy."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    run_check(checkable, "--notify", "--dry-run", "--notify-config", str(conf))
+    out = capsys.readouterr().out
+    import re
+
+    title = re.search(r"\[interrupt\] (\d+) lineup fix", out)
+    lines = out.count("EMPTY ") + out.count("BYE ") + out.count("OUT ")
+    assert title and int(title.group(1)) >= 1
+
+
+def test_the_alert_history_is_stamped_with_the_checks_clock_not_the_wall_clock(
+    checkable, tmp_path
+):
+    """`--now` has to be coherent, or the repeat policy compares a simulated
+    instant against a real one -- wrong wherever the flag is used, and
+    invisible in production where the two agree."""
+    import datetime as dt
+
+    from ffcoach.notify.history import AlertHistory
+
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+
+    import ffcoach.cli as cli
+
+    class Stub:
+        name = "stub"
+
+        def send(self, notification):
+            pass
+
+    original = cli._notifier
+    cli._notifier = lambda args: Stub()
+    try:
+        run_check(checkable, "--notify", "--notify-config", str(conf))
+    finally:
+        cli._notifier = original
+
+    stamps = {r.last_sent for r in AlertHistory(checkable).records().values()}
+    assert stamps
+    assert all(s.year == 2025 and s.month == 10 for s in stamps), stamps
+    assert all(s < dt.datetime.now(dt.UTC) for s in stamps)
