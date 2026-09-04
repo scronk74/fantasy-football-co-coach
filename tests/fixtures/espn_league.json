@@ -1,5 +1,5 @@
 {
-  "_note": "UNVERIFIED AGAINST A LIVE LEAGUE. Hand-built from the community-documented shape of ESPN's unofficial fantasy API (mTeam/mRoster/mSettings views). See the module docstring in src/ffcoach/leagues/espn.py. Replace with a real captured (cookie-scrubbed) response once the league invite lands.",
+  "_note": "PARTLY VERIFIED. The parser it exercises ran clean against a live league on 2026-09-04 (12 teams, zero diagnostics), so the field NAMES match ESPN. Still only two teams and one empty roster, so it proves shape rather than variety. Team names use ESPN's current single `name` field: this fixture encoded the pre-2023 location/nickname pair until 2026-09-04, which is why every real team silently rendered as 'Team 5'. When a fixture and the code agree, they can be wrong together -- check new fields against a live response, not against this file.",
   "id": 123456,
   "seasonId": 2026,
   "settings": {
@@ -53,8 +53,8 @@
   "teams": [
     {
       "id": 1,
-      "location": "Steve's",
-      "nickname": "Dynasty",
+      "name": "Dynasty",
+      "abbrev": "DYN",
       "owners": [
         "{ABCDEF12-3456-7890-ABCD-EF1234567890}"
       ],
@@ -140,8 +140,8 @@
     },
     {
       "id": 2,
-      "location": "Dave's",
-      "nickname": "Disasters",
+      "name": "Disasters",
+      "abbrev": "DIS",
       "owners": [
         "{11111111-2222-3333-4444-555555555555}"
       ],

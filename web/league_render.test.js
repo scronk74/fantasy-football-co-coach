@@ -148,3 +148,20 @@ test("the empty-roster row spans every column", () => {
   const columns = (rosterRowHtml(ENTRY()).match(/<td/g) || []).length;
   assert.match(rosterHtml([]), new RegExp(`colspan="${columns}"`));
 });
+
+test("a team card shows ESPN's own short abbreviation beside the name", () => {
+  const html = teamCardHtml(TEAM({ name: "Just End The Season", abbrev: "JETS" }));
+  assert.match(html, /Just End The Season/);
+  assert.match(html, /JETS/);
+});
+
+test("a missing abbreviation is omitted, never invented from the name", () => {
+  // A manufactured abbreviation looks exactly like a real one.
+  const html = teamCardHtml(TEAM({ name: "Just End The Season", abbrev: "" }));
+  assert.doesNotMatch(html, /class="abbrev"/);
+});
+
+test("an abbreviation is escaped like any other ESPN string", () => {
+  const html = teamCardHtml(TEAM({ abbrev: "<img onerror=1>" }));
+  assert.doesNotMatch(html, /<img/);
+});

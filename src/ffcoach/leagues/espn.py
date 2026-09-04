@@ -121,6 +121,44 @@ def _parse_entry(entry: dict, notes: list[str]) -> RosterEntry:
     )
 
 
+def _parse_team_name(row: dict, notes: list[str]) -> str:
+    """The team's own name, or a default that says it is one.
+
+    ESPN returns a single `name` field. This read `nickname` or `location`
+    first -- the *pre-2023* shape -- so on a live league every team fell
+    through to "Team 5", and the hand-written fixture encoded the old shape so
+    no test could see it. Team 11 is called "Just End The Season"; the product
+    called it "Team 11" for a week.
+
+    Fourth instance of the plausible-default pattern, and the second time the
+    fixture agreed with the code rather than with ESPN. So the legacy path and
+    the last-resort default both emit a diagnostic now: "Team 5" is a perfectly
+    valid ESPN name, and without a note there is no way to tell a real one from
+    a manufactured one.
+    """
+    name = row.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+
+    legacy = " ".join(
+        part.strip()
+        for part in (row.get("location"), row.get("nickname"))
+        if isinstance(part, str) and part.strip()
+    )
+    team_id = row.get("id")
+    if legacy:
+        notes.append(
+            f"team {team_id} has no `name`; using the pre-2023 "
+            f"location/nickname fields ({legacy!r})"
+        )
+        return legacy
+
+    notes.append(
+        f"team {team_id} has no name field at all; showing a placeholder"
+    )
+    return f"Team {team_id}"
+
+
 def _parse_team(
     row: dict, member_names: dict[str, str], my_swid: str | None, notes: list[str]
 ) -> Team:
@@ -128,11 +166,13 @@ def _parse_team(
     owner_ids = [_normalize_swid(o) for o in row.get("owners", [])]
     owner_display = ", ".join(member_names.get(oid, oid) for oid in owner_ids) or "Unknown"
     is_user_team = bool(my_swid) and _normalize_swid(my_swid) in owner_ids
-    name = row.get("nickname") or row.get("location") or f"Team {row.get('id')}"
+    name = _parse_team_name(row, notes)
 
+    abbrev = row.get("abbrev")
     return Team(
         team_id=str(row.get("id")),
         name=str(name),
+        abbrev=str(abbrev).strip() if isinstance(abbrev, str) and abbrev.strip() else "",
         owner=owner_display,
         wins=int(overall.get("wins", 0)),
         losses=int(overall.get("losses", 0)),

@@ -84,8 +84,9 @@ class CheckResult:
     week: int
     week_source: str
     team_name: str
-    findings: list[LineupFinding]
-    actionable: list[LineupFinding]
+    team_abbrev: str = ""
+    findings: list[LineupFinding] = field(default_factory=list)
+    actionable: list[LineupFinding] = field(default_factory=list)
     sources: tuple[SourceHealth, ...] = ()
     # Reasons this run could not see the whole picture. Non-empty means an
     # empty `findings` must not be read as "nothing is wrong".
@@ -221,6 +222,7 @@ def build_check(
         week=week.week,
         week_source=week.source,
         team_name=team.name,
+        team_abbrev=team.abbrev,
         findings=findings,
         actionable=actionable(findings, now),
         sources=tuple(sources),
