@@ -688,3 +688,221 @@ def test_the_ntfy_topic_never_reaches_the_log(checkable, tmp_path):
     text = log.read_text()
     assert "a-long-unguessable-topic-name" not in text
     assert "***" in text
+
+
+# --- E3: the dead-man's switch ---
+
+WATCH_YAML = """
+channel: ntfy
+ntfy:
+  topic: "a-long-unguessable-topic-name"
+watchdog:
+  max_silence_hours: 12
+  min_consecutive_failures: 3
+"""
+
+
+def stub_notifier(sent):
+    class Stub:
+        name = "stub"
+
+        def send(self, notification):
+            sent.append(notification)
+
+    return Stub()
+
+
+def prefill_failures(log, n, hours_ago_start=1.0):
+    import datetime as dt
+
+    now = dt.datetime.now(dt.UTC)
+    with log.open("w") as fh:
+        for i in range(n):
+            at = (now - dt.timedelta(hours=hours_ago_start + i)).isoformat()
+            fh.write(json.dumps({"at": at, "command": "check", "ok": False}) + "\n")
+
+
+def run_failing_check(checkable, conf, log):
+    """A check that cannot run: no --my-swid, so no team is marked as yours."""
+    return main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--now", "2025-10-01T09:00-04:00",
+        "--notify", "--notify-config", str(conf), "--log", str(log),
+    ])
+
+
+def test_a_run_of_failures_produces_an_outage_alert(checkable, tmp_path, capsys):
+    """D-023 exactly: the check errors, nothing is sent, and that looks
+    identical to a clean week unless something says otherwise."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML)
+    log = tmp_path / "runs.jsonl"
+    prefill_failures(log, 2)
+
+    import ffcoach.cli as cli
+
+    sent = []
+    original = cli._notifier
+    cli._notifier = lambda args: stub_notifier(sent)
+    try:
+        run_failing_check(checkable, conf, log)
+    finally:
+        cli._notifier = original
+
+    outage = [n for n in sent if n.title == "ffcoach is not working"]
+    assert len(outage) == 1
+    assert "3 runs in a row" in outage[0].body
+    assert "cookies" in outage[0].body
+
+
+def test_a_success_clears_the_failure_streak(checkable, tmp_path):
+    """Three failures then a success is a resolved outage, not an ongoing one."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML)
+    log = tmp_path / "runs.jsonl"
+    prefill_failures(log, 3)
+
+    import ffcoach.cli as cli
+
+    sent = []
+    original = cli._notifier
+    cli._notifier = lambda args: stub_notifier(sent)
+    try:
+        run_check(checkable, "--notify", "--notify-config", str(conf), "--log", str(log))
+    finally:
+        cli._notifier = original
+
+    assert [n for n in sent if n.title == "ffcoach is not working"] == []
+
+
+def test_the_outage_alert_does_not_repeat_every_run(checkable, tmp_path):
+    """A tripped watchdog is true on every run until it is fixed."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML)
+    log = tmp_path / "runs.jsonl"
+    prefill_failures(log, 2)
+
+    import ffcoach.cli as cli
+
+    sent = []
+    original = cli._notifier
+    cli._notifier = lambda args: stub_notifier(sent)
+    try:
+        for _ in range(3):
+            run_failing_check(checkable, conf, log)
+    finally:
+        cli._notifier = original
+
+    assert len([n for n in sent if n.title == "ffcoach is not working"]) == 1
+
+
+def test_a_healthy_run_produces_no_outage_alert(checkable, tmp_path):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML)
+    log = tmp_path / "runs.jsonl"
+
+    import ffcoach.cli as cli
+
+    sent = []
+    original = cli._notifier
+    cli._notifier = lambda args: stub_notifier(sent)
+    try:
+        run_check(checkable, "--notify", "--notify-config", str(conf), "--log", str(log))
+    finally:
+        cli._notifier = original
+
+    assert [n for n in sent if n.title == "ffcoach is not working"] == []
+
+
+def test_the_watchdog_sees_the_run_it_is_reporting_on(checkable, tmp_path):
+    """It reads the log *after* the line is written, not before."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML)
+    log = tmp_path / "runs.jsonl"
+    prefill_failures(log, 2)   # two prior failures; this run makes three
+
+    import ffcoach.cli as cli
+
+    sent = []
+    original = cli._notifier
+    cli._notifier = lambda args: stub_notifier(sent)
+    try:
+        main([
+            "check",
+            "--fixture", str(FIXTURES / "espn_league.json"),
+            "--cache", str(checkable),
+            "--season", "2025",
+            "--now", "2025-10-01T09:00-04:00",   # no --my-swid: this run fails
+            "--notify", "--notify-config", str(conf), "--log", str(log),
+        ])
+    finally:
+        cli._notifier = original
+
+    assert [n for n in sent if n.title == "ffcoach is not working"]
+
+
+def test_the_heartbeat_fires_even_without_notify(checkable, tmp_path):
+    """Absence of the ping is what reports a dead machine, so suppressing it
+    for a non-notifying run would fake one."""
+    import ffcoach.cli as cli
+
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML + '\nheartbeat:\n  url: "https://hc-ping.com/secret"\n')
+    pings = []
+
+    class FakeBeat:
+        def __init__(self, url, fail_url=""):
+            self.url, self.fail = url, fail_url
+
+        def ping(self, ok=True):
+            pings.append((self.url, ok))
+
+    original = cli.Heartbeat
+    cli.Heartbeat = FakeBeat
+    try:
+        run_check(checkable, "--log", str(tmp_path / "runs.jsonl"),
+                  "--notify-config", str(conf))
+    finally:
+        cli.Heartbeat = original
+
+    assert pings == [("https://hc-ping.com/secret", True)]
+
+
+def test_a_watchdog_failure_never_replaces_the_real_error(checkable, tmp_path, capsys):
+    """It runs in a `finally`; an exception here would mask what actually broke."""
+    import ffcoach.cli as cli
+
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML)
+
+    original = cli.assess
+    cli.assess = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("watchdog broke"))
+    try:
+        code = run_check(checkable, "--notify", "--dry-run",
+                         "--notify-config", str(conf), "--log", str(tmp_path / "r.jsonl"))
+    finally:
+        cli.assess = original
+    assert code == 2
+
+
+def test_doctor_states_the_exposure_when_no_heartbeat_is_configured(tmp_path, capsys):
+    """Silence about missing monitoring reads as coverage."""
+    import os
+
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(WATCH_YAML)
+    (tmp_path / "league.yaml").write_text(LEAGUE)
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        (tmp_path / "notify.yaml").write_text(WATCH_YAML)
+        main(["doctor", "--config", str(tmp_path / "league.yaml"),
+              "--cache", str(tmp_path / "c.sqlite3")])
+    finally:
+        os.chdir(cwd)
+    out = capsys.readouterr().out
+    assert "Heartbeat: NOT configured" in out
+    assert "nothing will tell you" in out

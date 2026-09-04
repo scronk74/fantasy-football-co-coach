@@ -15,3 +15,35 @@ ntfy:
   topic: "replace-me-with-something-unguessable"
   # Only change this if you self-host ntfy.
   server: "https://ntfy.sh"
+
+# --- E3: the dead-man's switch -------------------------------------------
+#
+# Two halves, and they catch different failures.
+#
+# ON-HOST (always active). `ffcoach check` reads its own run log and alerts you
+# when the tool itself has stopped working -- three failed runs in a row, or no
+# successful run in `max_silence_hours`. This is the expired-ESPN-cookie case:
+# the scheduler fires, the check errors, and nothing is sent, which looks
+# exactly like a clean week.
+watchdog:
+  # Tune to your schedule. Too low and a quiet Tuesday night pages you.
+  max_silence_hours: 12
+  min_consecutive_failures: 3
+
+# OFF-HOST (optional, and the only thing that survives the machine dying).
+# A process on a dead computer reports nothing about the computer being dead.
+# Point `url` at any service where ABSENCE of a ping is the alert:
+# healthchecks.io (free tier), Cronitor, Better Stack, self-hosted Uptime Kuma.
+# ffcoach GETs it after every successful run; the service tells you when the
+# pings stop.
+#
+# Leave blank and nothing breaks -- but a power cut, a network drop, or launchd
+# being unloaded would then be completely silent, and `doctor` will say so.
+#
+# The ping URL is a credential: whoever has it can forge a heartbeat, which
+# makes a dead machine look alive.
+heartbeat:
+  url: ""
+  # Optional and NEVER guessed from `url` -- appending "/fail" is one vendor's
+  # convention and silently wrong for the others.
+  fail_url: ""
