@@ -260,3 +260,49 @@ def test_the_timezone_actually_changes_a_waiver_deadline(tmp_path):
     a = next_waiver_deadline(waivers, now, east.tzinfo)
     b = next_waiver_deadline(waivers, now, west.tzinfo)
     assert b - a == dt.timedelta(hours=3)
+
+
+def test_the_scheduler_host_is_read(tmp_path):
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n"
+                        "scheduler_host: 'steve-imac'\n")
+    assert load_notify_config(p).scheduler_host == "steve-imac"
+
+
+def test_the_scheduler_host_defaults_to_unset(tmp_path):
+    """One machine is the common case; a guard you must configure before
+    anything works buys nothing until a second machine exists."""
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n")
+    assert load_notify_config(p).scheduler_host == ""
+
+
+def test_setting_the_scheduler_host_preserves_the_comments(tmp_path):
+    """A YAML round-trip would strip them, and this file is mostly comments
+    explaining what each knob costs if you get it wrong."""
+    from ffcoach.config import new_topic, set_scheduler_host, write_notify_config
+
+    p = tmp_path / "notify.yaml"
+    write_notify_config(p, new_topic())
+    before_comments = sum(1 for ln in p.read_text().splitlines() if ln.startswith("#"))
+    set_scheduler_host(p, "steve-imac")
+    after = p.read_text()
+    assert load_notify_config(p).scheduler_host == "steve-imac"
+    assert sum(1 for ln in after.splitlines() if ln.startswith("#")) == before_comments
+
+
+def test_setting_the_scheduler_host_twice_does_not_duplicate_the_key(tmp_path):
+    from ffcoach.config import new_topic, set_scheduler_host, write_notify_config
+
+    p = tmp_path / "notify.yaml"
+    write_notify_config(p, new_topic())
+    set_scheduler_host(p, "a")
+    set_scheduler_host(p, "b")
+    assert p.read_text().count("scheduler_host:") == 1
+    assert load_notify_config(p).scheduler_host == "b"
+
+
+def test_the_key_is_appended_when_a_hand_written_file_lacks_it(tmp_path):
+    from ffcoach.config import set_scheduler_host
+
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n")
+    set_scheduler_host(p, "steve-imac")
+    assert load_notify_config(p).scheduler_host == "steve-imac"
