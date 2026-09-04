@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 538 Python + 53 JS, all green · CI gates both on every PR |
-| **Phase** | **C 7/7, D 3/5, E 2/6.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. Next is E2 (launchd, once the iMac lands) and F1 (the Week page, once the draft fills a roster) |
+| **Tests** | 562 Python + 53 JS, all green · CI gates both on every PR |
+| **Phase** | **C 7/7, D 3/5, E 3/6.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. Next is F1 (the Week page, once the draft fills a roster) and D4 (per-alert control) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -121,7 +121,7 @@ flowchart LR
     subgraph SE["E · Reliability"]
         direction TB
         E1["E1 structured logging<br/>DONE"]:::confirmed
-        E2["E2 launchd install"]:::confirmed
+        E2["E2 launchd install<br/>DONE"]:::confirmed
         E3["E3 dead-man switch<br/>DONE"]:::confirmed
         E4["E4 delivery failure"]:::confirmed
         E5["E5 ffcoach init"]:::confirmed
@@ -188,7 +188,7 @@ flowchart LR
 | D4 | Per-alert enable / tier / threshold config | Backlog | 🟢 V1 | Week 1 | D1 | L | D-020 | ✅ 2026-08-29 |
 | D5 | Channel bake-off — `ffcoach notify --test` shipped with D1 | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
 | E1 | **Structured run logging** (JSONL + SQLite history) | Done | 🟢 V1 | — | D1 | M | D-021, D-041, **D-062** | ✅ 2026-09-04 |
-| E2 | `launchd` install + per-window scheduling | **Next** | 🟢 V1 | **Sun 09-06** | D1, E1 | **H** | D-022 | ✅ 2026-08-29 |
+| E2 | `launchd` install (`ffcoach schedule`) | Done | 🟢 V1 | — | D1, E1 | **H** | D-022, **D-064** | ✅ 2026-09-04 |
 | E3 | Dead-man's switch (on-host **and** off-host) | Done | 🟢 V1 | — | E1 | M | D-023, R-3, **D-063** | ✅ 2026-09-04 |
 | E4 | Delivery-failure detection + fallback | Backlog | 🟢 V1 | Week 1 | D1, E1 | M | D-024 | ✅ 2026-08-29 |
 | E5 | `ffcoach init` + hardened `doctor` — **`notify --init` shipped** | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 2/6 (33%) · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 20/42 steps done (48%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 3/6 (50%) · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 21/42 steps done (50%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -331,6 +331,8 @@ flowchart LR
 
 - **D-063 — The dead-man's switch is two halves, and the off-host half is optional but its absence is stated.** ✅ *(2026-09-04)*. The on-host watchdog trips on three consecutive failures (unambiguous, and needs no assumption about the schedule — this is D-023's expired-cookie case) **or** no *successful* run within a configurable window (catches what failures cannot: an unloaded scheduler logs nothing, so there are no failures to count). Measured from the last success rather than the last run, because a machine erroring every fifteen minutes since Thursday is not alive. It cannot catch its own host dying, so `notify/heartbeat.py` GETs an external URL after every successful run and lets **absence** be the signal — a bare URL rather than an integration, since healthchecks.io / Cronitor / Better Stack / Uptime Kuma all accept one, and `fail_url` is never guessed by appending `/fail` (one vendor's convention, silently wrong for the rest). The heartbeat fires regardless of `--notify`: monitoring, not an alert, and suppressing it would fake a dead machine. **When it is unconfigured `doctor` states the exposure** — "if this machine dies, nothing will tell you" — because silence about missing monitoring reads as coverage. Ping URLs join the ntfy topic and ESPN cookies in the run log's redaction set: a forged heartbeat makes a dead machine look alive, which is worse than no monitoring at all. *Affects: E2, R-3.*
 
+- **D-064 — A fixed interval, not a schedule derived from kickoffs.** ✅ *(2026-09-04)*. D-009 times alerts off per-player kickoffs, which suggests generating `StartCalendarInterval` entries from the NFL schedule. Rejected: a plist that must be regenerated whenever a game is flexed is a plist that will be stale exactly when it matters, and the failure is silent. A flat `StartInterval` of 30 minutes is denser than the three-hour last-call window (D-060) so no reminder is ever late, and sparse enough that a season is ~10k requests to an unofficial API rather than ~300k. Bounds are enforced at 5–240 minutes with the reasoning in the error message. Everything schedule-*aware* already lives in the pure layer, where it is tested; the scheduler only has to be frequent enough not to be the limiting factor. *Affects: E2, E6.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -350,7 +352,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 538 Python + 53 JS, all green; offline via committed fixtures |
+| Unit/integration | 562 Python + 53 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

@@ -47,6 +47,9 @@ uv run ffcoach league            # ESPN league/rosters -> web/data/league.json
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # no ESPN access needed
 uv run ffcoach refresh           # populate the cache only
 uv run ffcoach doctor            # config, cache, alert channel, last run
+uv run ffcoach schedule --print  # the launchd plist, without installing it
+uv run ffcoach schedule --install   # ...and load it
+uv run ffcoach schedule --status    # loaded? and has it actually run?
 ```
 
 View pages through VS Code Live Server, not by opening the file. `file://` blocks the
@@ -235,6 +238,41 @@ One trap already paid for: ntfy is published as **JSON to the server root**, not
 tool generates contains an em dash, so the header form raises `UnicodeEncodeError`
 before anything is sent. A test caught it; the first alert of the season would have
 otherwise.
+
+### The scheduler: everything checkable is checked, because the rest cannot be
+
+`agent.py` builds the launchd plist and is pure; `cli.py` calls `launchctl`. R-2 says
+launchd correctness is untestable in CI, and that is true of the **loading** — it is not
+true of the plist, which is a function of two paths and an interval. A wrong plist is the
+worst outcome available here, because launchd will happily "run" it and fail silently
+every interval forever.
+
+**launchd, not cron** (D-022): cron skips a job it missed while the Mac was asleep and
+would be silently absent on exactly the mornings that matter. launchd fires a missed
+`StartInterval` once on wake.
+
+`build_agent` refuses more than it accepts, and every guard maps to a *silent* failure:
+
+- **absolute paths only** — launchd has no shell, no PATH, no working directory. A
+  relative path does not fail loudly; the job runs, cannot find `uv`, and exits nonzero
+  forever.
+- **`league.yaml` / `espn.yaml` / `notify.yaml` must exist** — scheduling a check that
+  cannot read its config, or has nowhere to send, is scheduling silence.
+- **interval clamped to 5–240 minutes** — below the floor this hammers an unofficial API;
+  above the ceiling it cannot catch a Sunday inactives ruling before kickoff.
+- **no `KeepAlive`** — it restarts a job the moment it exits, which for a periodic check
+  is an infinite loop against ESPN.
+- **`plistlib`, never a format string** — a directory named `Tom & Jerry` is ordinary and
+  hand-written XML breaks on it.
+
+Install does `bootout` then `bootstrap`, so reinstalling after an edit replaces the
+definition instead of sitting behind the loaded one. A failed `bootstrap` is reported and
+says the plist exists but nothing is scheduled — a scheduler that silently did not load
+is the failure this whole stage is about.
+
+`--status` reports **loaded** *and* **whether anything has actually run**, for the same
+reason `doctor` prints two lines: launchd accepting a plist says nothing about the job
+succeeding or reaching a phone. R-2 is precisely the gap between those two facts.
 
 ### The dead-man's switch has two halves, and only one of them can work alone
 
@@ -439,7 +477,16 @@ pointed at a second league.
 
 ## Testing
 
-Every module ships with tests, including browser code. Sources are tested against committed
+Every module ships with tests, including browser code.
+
+**`tests/conftest.py` chdirs every test into a scratch directory**, and that is not
+tidiness. `--log`, `--notify-config` and `--cache` all default to paths relative to the
+working directory, so any test not overriding all three read and wrote the developer's
+real files: 463 test records had accumulated in the actual run log, and `_watch` was
+loading the real `notify.yaml` on every check test — with a heartbeat URL configured
+there, the suite would have been pinging a live monitoring service and faking a healthy
+machine. Chdir-per-test rather than per-call-site fixes, because the defaults are the
+point of those options and the next test written will forget again. Sources are tested against committed
 fixtures with a mocked `httpx.MockTransport`, so the suite is deterministic and offline.
 See the `client_returning()` helper duplicated across source tests.
 

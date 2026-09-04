@@ -982,3 +982,178 @@ def test_the_config_is_not_world_readable(tmp_path):
     conf = tmp_path / "notify.yaml"
     main(["notify", "--init", "--notify-config", str(conf)])
     assert conf.stat().st_mode & 0o077 == 0
+
+
+# --- E2: the launchd agent, with launchctl itself stubbed ---
+
+
+def in_workspace(tmp_path):
+    """A directory that looks like a configured checkout."""
+    import os
+
+    for name in ("league.yaml", "espn.yaml", "notify.yaml"):
+        (tmp_path / name).write_text("x: 1\n")
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    return cwd
+
+
+def test_print_writes_nothing_and_loads_nothing(tmp_path, capsys):
+    """The inspectable path: see exactly what would be installed, first."""
+    import os
+
+    import ffcoach.cli as cli
+
+    calls = []
+    original = cli._launchctl
+    cli._launchctl = lambda *a: calls.append(a) or (0, "")
+    cwd = in_workspace(tmp_path)
+    try:
+        assert main(["schedule", "--print"]) == 0
+    finally:
+        os.chdir(cwd)
+        cli._launchctl = original
+
+    out = capsys.readouterr().out
+    assert "com.ffcoach.check" in out
+    assert "<key>StartInterval</key>" in out
+    assert calls == []
+
+
+def test_install_boots_the_agent_out_before_bootstrapping_it(tmp_path):
+    """Re-installing after an edit must replace the definition, not sit behind
+    the one already loaded."""
+    import os
+
+    import ffcoach.cli as cli
+
+    calls = []
+    original_lc, original_path = cli._launchctl, cli.agent_plist_path
+    cli._launchctl = lambda *a: calls.append(a[0]) or (0, "")
+    cli.agent_plist_path = lambda home=None: tmp_path / "agent.plist"
+    cwd = in_workspace(tmp_path)
+    try:
+        assert main(["schedule", "--install"]) == 0
+    finally:
+        os.chdir(cwd)
+        cli._launchctl, cli.agent_plist_path = original_lc, original_path
+
+    assert calls == ["bootout", "bootstrap"]
+    assert (tmp_path / "agent.plist").exists()
+
+
+def test_a_failed_bootstrap_is_reported_rather_than_claimed_as_success(tmp_path, capsys):
+    """A scheduler that silently did not load is the failure this whole stage
+    is about."""
+    import os
+
+    import ffcoach.cli as cli
+
+    original_lc, original_path = cli._launchctl, cli.agent_plist_path
+    cli._launchctl = lambda *a: (0, "") if a[0] == "bootout" else (5, "Input/output error")
+    cli.agent_plist_path = lambda home=None: tmp_path / "agent.plist"
+    cwd = in_workspace(tmp_path)
+    try:
+        assert main(["schedule", "--install"]) == 1
+    finally:
+        os.chdir(cwd)
+        cli._launchctl, cli.agent_plist_path = original_lc, original_path
+
+    err = capsys.readouterr().err
+    assert "bootstrap failed" in err
+    assert "nothing is scheduled" in err
+
+
+def test_install_refuses_in_a_directory_with_no_config(tmp_path, capsys):
+    """launchd reports a missing config as a nonzero exit, forever, silently."""
+    import os
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        assert main(["schedule", "--install"]) == 1
+    finally:
+        os.chdir(cwd)
+    assert "league.yaml" in capsys.readouterr().err
+
+
+def test_an_out_of_range_interval_is_refused(tmp_path, capsys):
+    import os
+
+    cwd = in_workspace(tmp_path)
+    try:
+        assert main(["schedule", "--print", "--interval", "1"]) == 1
+    finally:
+        os.chdir(cwd)
+    assert "interval must be between" in capsys.readouterr().err
+
+
+def test_uninstall_removes_the_plist_even_when_nothing_was_loaded(tmp_path, capsys):
+    import ffcoach.cli as cli
+
+    plist = tmp_path / "agent.plist"
+    plist.write_text("<plist/>")
+    original_lc, original_path = cli._launchctl, cli.agent_plist_path
+    cli._launchctl = lambda *a: (3, "No such process")
+    cli.agent_plist_path = lambda home=None: plist
+    try:
+        assert main(["schedule", "--uninstall"]) == 0
+    finally:
+        cli._launchctl, cli.agent_plist_path = original_lc, original_path
+    assert not plist.exists()
+    assert "Unscheduled" in capsys.readouterr().out
+
+
+def test_status_reports_loaded_and_whether_anything_has_actually_run(tmp_path, capsys):
+    """R-2 is exactly the gap between those two facts: launchd accepting a
+    plist says nothing about the job succeeding or reaching a phone."""
+    import ffcoach.cli as cli
+
+    original_lc, original_path = cli._launchctl, cli.agent_plist_path
+    cli._launchctl = lambda *a: (0, "\tstate = running\n")
+    cli.agent_plist_path = lambda home=None: tmp_path / "agent.plist"
+    try:
+        main(["schedule", "--status", "--log", str(tmp_path / "runs.jsonl")])
+    finally:
+        cli._launchctl, cli.agent_plist_path = original_lc, original_path
+
+    out = capsys.readouterr().out
+    assert "Loaded:   yes" in out
+    assert "Last run: never" in out
+    assert "nothing has run yet" in out
+
+
+def test_status_says_plainly_when_nothing_is_scheduled(tmp_path, capsys):
+    import ffcoach.cli as cli
+
+    original_lc, original_path = cli._launchctl, cli.agent_plist_path
+    cli._launchctl = lambda *a: (3, "Could not find service")
+    cli.agent_plist_path = lambda home=None: tmp_path / "absent.plist"
+    try:
+        main(["schedule", "--status", "--log", str(tmp_path / "runs.jsonl")])
+    finally:
+        cli._launchctl, cli.agent_plist_path = original_lc, original_path
+
+    out = capsys.readouterr().out
+    assert "(absent)" in out
+    assert "Loaded:   no" in out
+
+
+def test_schedule_requires_a_mode(capsys):
+    with pytest.raises(SystemExit):
+        main(["schedule"])
+
+
+def test_the_suite_never_writes_to_the_real_run_log(tmp_path):
+    """Regression guard for the conftest isolation.
+
+    `--log`, `--notify-config` and `--cache` all default to paths relative to
+    the working directory, so a test that forgets one reads and writes the
+    developer's own files. 463 test records had accumulated in the real run log
+    before this was noticed -- and `_watch` was loading the real notify.yaml,
+    which would have pinged a live heartbeat service and faked a healthy machine.
+    """
+    from pathlib import Path
+
+    assert Path.cwd() != Path(__file__).resolve().parent.parent
+    assert not (Path.cwd() / ".ffcoach-runs.jsonl").exists()
