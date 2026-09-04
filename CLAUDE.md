@@ -414,7 +414,15 @@ the DOM, it lives in `main.js` / `league_main.js` and stays trivial enough to re
 
 `web/nav.js` holds one `PAGES` list driving the nav on every page — adding a section is one
 entry, not per-page markup edits. A test fails if page names get hardcoded back into
-`navHtml`.
+`navHtml`, and another asserts **`index.html` is the Week page**: the front door was the
+draft board until 2026-09-04, which meant the first thing the app showed was the one page
+the user had said he did not want (D-050, D-051). The board lives at `draft.html`.
+
+`week.js` **re-derives nothing.** `actionable`, `verb`, `status` and `blind_spots` all
+arrive from Python where they are tested; a second implementation in JavaScript of "can I
+still fix this?" would answer a slightly different question on every reload. `blindSpotsHtml`
+renders **above** the findings, never below — an empty findings list plus a caveat below the
+fold is exactly the false reassurance `CheckResult` exists to prevent.
 
 ## Binding UX rules (enforced by tests, not just convention)
 

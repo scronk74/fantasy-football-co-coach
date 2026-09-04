@@ -147,3 +147,76 @@ def test_write_board_also_writes_a_league_payload(tmp_path):
     target = tmp_path / "web" / "data" / "league.json"
     write_board(league_json_payload(), target)
     assert json.loads(target.read_text())["teams"][0]["name"] == "Dynasty"
+
+
+# --- F1: the payload the Week page reads ---
+
+
+def check_result(**over):
+    import datetime as dt
+
+    from ffcoach.advisors.lineup import LineupFinding
+    from ffcoach.check import CheckResult, SourceHealth
+    from ffcoach.model.deadlines import FixKind, FixPlan
+
+    sunday = dt.datetime(2025, 10, 5, 17, 0, tzinfo=dt.UTC)
+    finding = LineupFinding(
+        kind="out", player_name="Hurt Guy", position="WR", lineup_slot="WR",
+        nfl_team="KC", reason="listed OUT", replacements=("Bench Guy",),
+        kickoff=sunday, locked=False, fix=FixPlan(FixKind.BENCH_SWAP, sunday),
+        locks_at=sunday,
+    )
+    base = dict(
+        week=5, week_source="espn", team_name="Team 11",
+        findings=[finding], actionable=[finding],
+        sources=(SourceHealth("ESPN league", 0.0, False),),
+        next_lock=sunday, waiver_deadline=sunday,
+    )
+    base.update(over)
+    return CheckResult(**base)
+
+
+def payload_for(**over):
+    from ffcoach.report.build import check_payload
+
+    return check_payload(
+        check_result(**over), league_name="L",
+        generated_at="2025-10-01T09:00:00+00:00", timezone="America/New_York",
+    )
+
+
+def test_the_check_payload_carries_the_status_not_just_the_findings():
+    """The page cannot tell "nothing wrong" from "we could not see everything"
+    out of an empty list alone -- that is D-054's whole point."""
+    p = payload_for(findings=[], actionable=[], blind_spots=("x",))
+    assert p["status"] == "unverified"
+    assert p["all_clear"] is False
+    assert p["blind_spots"] == ["x"]
+
+
+def test_each_finding_carries_its_verb_rather_than_only_its_kind():
+    """D-046: "Claim" and "Swap" are different instructions, and a time alone
+    cannot express the difference."""
+    assert payload_for()["findings"][0]["verb"] == "Swap"
+
+
+def test_actionability_is_decided_in_python_not_in_the_browser():
+    """Comparing a deadline to "now" in JavaScript answers a slightly different
+    question on every reload."""
+    p = payload_for()
+    assert p["findings"][0]["actionable"] is True
+
+
+def test_the_payload_names_the_timezone_its_times_are_in():
+    """Every timestamp carries an offset, but the page renders in the league's
+    zone, not the browser's -- see D-065."""
+    assert payload_for()["timezone"] == "America/New_York"
+
+
+def test_the_check_payload_never_contains_a_dollar_figure():
+    assert "$" not in json.dumps(payload_for())
+
+
+def test_the_check_payload_is_json_serialisable():
+    """It is written straight to disk; a datetime would blow up at write time."""
+    json.dumps(payload_for())

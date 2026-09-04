@@ -3,8 +3,13 @@
 // hunt down and update.
 
 export const PAGES = [
-  { id: "draft", label: "Draft Board", href: "index.html" },
+  // The front door is this week's problems (D-051). The draft board moved off
+  // index.html on 2026-09-04: it is legacy scaffolding (D-050), and the app
+  // opening on it meant the first thing you saw was the one page you did not
+  // want.
+  { id: "week", label: "This Week", href: "index.html" },
   { id: "league", label: "My League", href: "league.html" },
+  { id: "draft", label: "Draft Board", href: "draft.html" },
 ];
 
 export function navHtml(currentPageId) {

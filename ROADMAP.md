@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 571 Python + 53 JS, all green · CI gates both on every PR |
-| **Phase** | **C 7/7, D 3/5, E 3/6.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. Next is F1 (the Week page, once the draft fills a roster) and D4 (per-alert control) |
+| **Tests** | 577 Python + 84 JS, all green · CI gates both on every PR |
+| **Phase** | **C 7/7, D 3/5, E 3/6, F 1/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. The Week page is the front door. Next: the first real run after Monday's draft, then E6 (inactives sweep) and D4/F2 (per-alert control) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -130,7 +130,7 @@ flowchart LR
     subgraph SF["F · Dashboard"]
         direction TB
         F0["F0 ffcoach serve"]:::confirmed
-        F1["F1 week page<br/>= new landing page"]:::confirmed
+        F1["F1 week page<br/>DONE · landing page"]:::confirmed
         F2["F2 notification control UI"]:::confirmed
         F3["F3 source refresh panel"]:::confirmed
         F4["F4 alert history view"]:::proposed
@@ -194,7 +194,7 @@ flowchart LR
 | E5 | `ffcoach init` + hardened `doctor` — **`notify --init` shipped** | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
 | E6 | Inactives sweep (~90m pre-kickoff) | Backlog | 🟢 V1 | Week 1 | E2 | M | D-026 | ✅ 2026-08-29 |
 | F0 | **`ffcoach serve` — local web server** | Backlog | 🟢 V1 | — | — | L | D-040 | ✅ 2026-08-29 |
-| F1 | Week dashboard — **becomes the landing page** | Backlog | 🟢 V1 | **Wed 09-09** | C4, F0 | M | D-027, D-028, **D-051** | ✅ 2026-09-03 |
+| F1 | Week dashboard — **is the landing page** | Done | 🟢 V1 | — | C4 | M | D-027, D-028, D-051, **D-066** | ✅ 2026-09-04 |
 | F2 | Notification control UI (writes config) | Backlog | 🟢 V1 | — | D4, F0 | M | D-020, D-040 | ✅ 2026-08-29 |
 | F3 | Data-source refresh / health panel | Backlog | 🟢 V1 | — | E1, F0 | L | D-029 | ✅ 2026-08-29 |
 | F4 | Alert history view | Backlog | 🔵 V1-nice | — | E1, F0 | L | — | 🤖 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 3/6 (50%) · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 21/42 steps done (50%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 3/6 (50%) · F 1/5 (20%) · G 0/5 · H 0/6.
+**Overall:** 22/42 steps done (52%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -335,6 +335,8 @@ flowchart LR
 
 - **D-065 — The league's timezone is config, and its absence is a blind spot.** ✅ *(2026-09-04)*. It was a hardcoded `ZoneInfo("America/New_York")` in `check.py`, introduced by me and flagged in passing rather than pressed on. ESPN reports `acquisitionSettings.waiverProcessHour` as a **bare integer with no timezone field anywhere** — the entire payload was searched to confirm it — so 11:00 Eastern and 11:00 Pacific are equally valid readings of the same number, three hours apart, on a deadline the tool states as fact. That is the failure class the rest of this codebase exists to prevent, reintroduced. Now `league.yaml` carries `timezone:`; an unknown zone is **refused rather than defaulted**, because a typo silently becoming Eastern leaves the user believing a value they set; and when `league.yaml` cannot be read the fallback is recorded as a blind spot, so the assumption cannot pass as knowledge. The run log records which zone was used, since a deadline three hours out is otherwise unexplainable afterwards. **Eastern confirmed by the user against ESPN's own UI on 2026-09-04.** *Affects: C4, D3, E6, and every deadline the product emits.*
 
+- **D-066 — The Week page re-derives nothing, and blind spots render above the findings.** ✅ *(2026-09-04)*. `actionable`, `verb`, `status` and `blind_spots` are all computed in Python, where they are tested, and travel into `check.json` verbatim. A second implementation in JavaScript of "can I still fix this?" would compare a deadline to `now` on every reload and answer a slightly different question each time. The ordering rule is severity before deadline — an empty slot on Sunday outranks a bye you have a week to solve, because severity is about how *certain* the zero is. And `blindSpotsHtml` renders **above** the queue: an empty findings list with the caveat below the fold is exactly the false reassurance D-054 exists to prevent. The page also fails loudly — a payload it cannot load shows `unverified`, never a clean week. *Affects: F1, F3.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -348,13 +350,14 @@ flowchart LR
 - **R-1 — ~~No league invite yet.~~ CLOSED 2026-09-03.** League `1076479097`, `espn.yaml` created by the user, `ffcoach league` returns 12 teams with **zero diagnostics** — the hand-written fixture's field names matched live ESPN exactly. `lineupLocktimeType` is `INDIVIDUAL_GAME`, the branch already handled. Historical detail below.
 - **R-1 (historical) — No league invite yet.** *Gates:* verifying the ESPN parser against real data; `espn.yaml`; real league settings; anything running against a live league. **No longer gates C5** — C5 was unblocked by recognizing only the *default* lock value and treating any other as the alternative, so the unverified spelling was never needed. *What must change:* the user is invited and supplies league ID + `espn_s2`/`SWID` cookies. *Why it matters:* `leagues/espn.py` was built against a **hand-written fixture** derived from community docs — tests passing proves internal consistency, **not** that it matches ESPN. Expect field-name corrections. *Who decides:* league commissioner, then user. *Linked:* B1, Q-2.
 - **R-2 — `launchd` correctness is untestable in CI.** *(Sharpened 2026-09-04: the delivery half is no longer part of this. `ffcoach notify --test` was published and received on a real phone, so a silent `launchd` run can no longer be blamed on the channel — what remains untested is the scheduling itself.)* *Gates:* confidence in E2/E3. *What must change:* a real install-and-wait-a-day check on the actual iMac. *Why:* the failure mode is silence, which looks identical to success. *Who decides:* user (manual verification). *Linked:* E2, E3.
-- **R-3 — The scheduler and the dead-man's switch share one sleeping iMac.** *(Update 2026-09-03: the user hopes to have a **dedicated always-on iMac** in place over the weekend of 09-05/06, which removes the sleep half of this. It is still a single host, so an off-host heartbeat remains the only thing that catches the machine itself dying — the roadblock narrows rather than closes.)* *(Raised by the 2026-08-31 review.)* *Gates:* whether "never miss a move" is literally true or best-effort. *Why:* a process on that machine cannot warn you while the machine is asleep. Running a missed job on wake only helps if wake precedes the deadline. *What must change:* either an off-host heartbeat, or the promise is restated as best-effort in the product's own copy. **The mechanism now exists** (E3, D-063) — `heartbeat.url` in `notify.yaml`, and `doctor` names the exposure while it is blank. What remains is a *user action*: pick a service and paste a URL. Until that happens the roadblock is open, and the product says so on every `doctor`. *Who decides:* user. *Linked:* E2, E3, D-023.
+- **R-3 — ~~The scheduler and the dead-man's switch share one sleeping iMac.~~ CLOSED 2026-09-04.** The mechanism shipped with E3 and the user configured a healthchecks.io ping URL; `doctor` reports `Heartbeat: configured (off-host)` and a successful ping was observed at the service. Absence of that ping is now the signal, so the machine dying is no longer silent. Historical detail below.
+- **R-3 (historical) — The scheduler and the dead-man's switch share one sleeping iMac.** *(Update 2026-09-03: the user hopes to have a **dedicated always-on iMac** in place over the weekend of 09-05/06, which removes the sleep half of this. It is still a single host, so an off-host heartbeat remains the only thing that catches the machine itself dying — the roadblock narrows rather than closes.)* *(Raised by the 2026-08-31 review.)* *Gates:* whether "never miss a move" is literally true or best-effort. *Why:* a process on that machine cannot warn you while the machine is asleep. Running a missed job on wake only helps if wake precedes the deadline. *What must change:* either an off-host heartbeat, or the promise is restated as best-effort in the product's own copy. **The mechanism now exists** (E3, D-063) — `heartbeat.url` in `notify.yaml`, and `doctor` names the exposure while it is blank. What remains is a *user action*: pick a service and paste a URL. Until that happens the roadblock is open, and the product says so on every `doctor`. *Who decides:* user. *Linked:* E2, E3, D-023.
 
 ## 8. Validation & test-coverage status
 
 | Layer | State |
 |---|---|
-| Unit/integration | 571 Python + 53 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
+| Unit/integration | 577 Python + 84 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

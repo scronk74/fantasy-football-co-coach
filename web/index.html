@@ -3,39 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Draft Board</title>
+<title>This Week</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <nav id="nav" class="sitenav"></nav>
 <header>
-  <h1 id="league">Draft Board</h1>
-  <div class="controls">
-    <div class="chips" id="positions"></div>
-    <label class="toggle"><input type="checkbox" id="hide-drafted"> Hide drafted</label>
-    <label class="toggle"><input type="checkbox" id="explain"> Explain mode</label>
-    <button id="reset">Reset draft</button>
-  </div>
-  <p class="howto">
-    When it is your turn, take the top player who is not crossed out. Tick a
-    player off as each pick happens and the board updates.
-  </p>
-  <p class="status" id="status"></p>
+  <h1 id="title">This Week</h1>
+  <p class="subtitle" id="subtitle"></p>
+  <p id="badge"></p>
+  <p class="headline" id="headline">Loading the last check…</p>
 </header>
-<main>
-  <p class="best" id="best"></p>
-  <div class="table-scroll">
-    <table>
-      <thead>
-        <tr>
-          <th>Rank</th><th></th><th>Player</th><th>Pos</th>
-          <th>ADP</th><th>Available at next pick</th>
-        </tr>
-      </thead>
-      <tbody id="board"></tbody>
-    </table>
-  </div>
-</main>
-<script type="module" src="main.js"></script>
+<main id="body"></main>
+<footer>
+  <p class="status" id="sources"></p>
+  <p class="status" id="generated"></p>
+  <p class="howto">Updated by <code>uv run ffcoach check</code>.</p>
+</footer>
+<script type="module" src="week_main.js"></script>
 </body>
 </html>
