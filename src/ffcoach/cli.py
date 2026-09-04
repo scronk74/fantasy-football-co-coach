@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ffcoach.advisors.draft import build_board
 from ffcoach.cache import Cache
+from ffcoach.check import LEAGUE_TZ, CheckError, SourceHealth, build_check
 from ffcoach.config import ConfigError, load_config, load_espn_credentials
 from ffcoach.leagues.espn import parse_league
 from ffcoach.leagues.espn_client import EspnUnavailable, fetch_league
@@ -20,6 +21,7 @@ from ffcoach.model.week import (
     resolve_week,
 )
 from ffcoach.report.build import board_payload, league_payload, write_board
+from ffcoach.report.check_text import render_check
 from ffcoach.sources.schedule import ScheduleUnavailable, fetch_schedule, parse_schedule
 from ffcoach.sources.crosswalk import CrosswalkUnavailable, fetch_crosswalk, parse_crosswalk
 from ffcoach.sources.ffcalc import AdpUnavailable, fetch_adp, parse_adp
@@ -42,15 +44,32 @@ def _parser() -> argparse.ArgumentParser:
         ("build", "write web/data/board.json"),
         ("doctor", "report config and cache state"),
         ("league", "fetch ESPN league/roster data and write web/data/league.json"),
+        ("check", "report whether this week's lineup needs fixing"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--config", default="league.yaml", type=Path)
         p.add_argument("--cache", default=".ffcoach.sqlite3", type=Path)
         if name == "build":
             p.add_argument("--out", default=Path("web/data/board.json"), type=Path)
+        if name == "check":
+            p.add_argument(
+                "--now",
+                default=None,
+                help=(
+                    "ISO-8601 instant to check as, instead of the real clock. "
+                    "Every deadline in the output depends on it, so this is how "
+                    "the whole decision is exercised offline"
+                ),
+            )
+            p.add_argument(
+                "--no-look-ahead",
+                action="store_true",
+                help="skip next week's uncovered byes",
+            )
         if name == "league":
-            p.add_argument("--espn-config", default=Path("espn.yaml"), type=Path)
             p.add_argument("--out", default=Path("web/data/league.json"), type=Path)
+        if name in ("league", "check"):
+            p.add_argument("--espn-config", default=Path("espn.yaml"), type=Path)
             p.add_argument(
                 "--fixture",
                 type=Path,
@@ -120,14 +139,20 @@ def _age(seconds: float) -> str:
     return f"{int(seconds / 86400)}d"
 
 
-def _run_league(args, cache: Cache) -> int:
+def _load_league(args, cache: Cache):
+    """`(League, SourceResult | None)`, or `None` after printing why not.
+
+    Shared by `league` and `check` so the fixture path -- the one that needs no
+    cookies and no network -- is the same code in both, rather than a second
+    implementation that can drift from the one people actually run.
+    """
     source = None
     if args.fixture:
         try:
             raw = args.fixture.read_text()
         except OSError as exc:
             print(f"error: could not read fixture: {exc}", file=sys.stderr)
-            return 1
+            return None
         # Fixture mode used to leave `my_swid` None, so the demo produced a page
         # with no "your team" card while the page's own copy promised one.
         my_swid = args.my_swid
@@ -136,22 +161,29 @@ def _run_league(args, cache: Cache) -> int:
             creds = load_espn_credentials(args.espn_config)
         except ConfigError as exc:
             print(f"error: {exc}", file=sys.stderr)
-            return 1
+            return None
         try:
             source = fetch_league(
                 creds.league_id, creds.season, creds.espn_s2, creds.swid, cache
             )
         except EspnUnavailable as exc:
             print(f"error: {exc}", file=sys.stderr)
-            return 1
+            return None
         raw = source.text
         my_swid = creds.swid
 
     try:
-        league = parse_league(raw, my_swid=my_swid)
+        return parse_league(raw, my_swid=my_swid), source
     except EspnUnavailable as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
+def _run_league(args, cache: Cache) -> int:
+    loaded = _load_league(args, cache)
+    if loaded is None:
         return 1
+    league, source = loaded
 
     # No caller may invent a week. Resolve it once, here, and say where it
     # came from -- a derived week is a fallback, not a fact.
@@ -189,6 +221,76 @@ def _run_league(args, cache: Cache) -> int:
     return 0
 
 
+# Exit codes. A check is run unattended long before anyone reads its output,
+# so the status has to survive as a number.
+EXIT_ALL_CLEAR = 0
+EXIT_ERROR = 1
+EXIT_ACTIONABLE = 2       # something you can still fix
+EXIT_INCOMPLETE = 3       # nothing actionable, but this run was not a clean look
+
+
+def _run_check(args, cache: Cache) -> int:
+    """Compose the whole safety decision and say what it concluded."""
+    if args.now:
+        try:
+            now = dt.datetime.fromisoformat(args.now)
+        except ValueError as exc:
+            print(f"error: --now is not an ISO-8601 instant: {exc}", file=sys.stderr)
+            return EXIT_ERROR
+        if now.tzinfo is None:
+            # A naive instant would silently be read as UTC, shifting every
+            # deadline by hours. Refuse rather than pick a zone.
+            print("error: --now needs a timezone offset, e.g. 2026-09-06T09:00-04:00",
+                  file=sys.stderr)
+            return EXIT_ERROR
+    else:
+        now = dt.datetime.now(dt.UTC)
+
+    loaded = _load_league(args, cache)
+    if loaded is None:
+        return EXIT_ERROR
+    league, source = loaded
+
+    week = _resolve_week(league, cache, args.season)
+    if week is None:
+        return EXIT_ERROR
+
+    try:
+        schedule_raw = fetch_schedule(args.season, cache)
+        schedule = parse_schedule(schedule_raw.text, args.season)
+    except ScheduleUnavailable as exc:
+        # Without a schedule there are no kickoffs, no byes and no deadlines --
+        # every finding this tool makes is timed off one. Refusing beats
+        # emitting an untimed answer that reads like a clean lineup.
+        print(f"error: no NFL schedule, so no deadlines can be computed: {exc}",
+              file=sys.stderr)
+        return EXIT_ERROR
+
+    sources = [SourceHealth("NFL schedule", schedule_raw.age_seconds,
+                            schedule_raw.stale, schedule_raw.error)]
+    if source is not None:
+        sources.insert(0, SourceHealth("ESPN league", source.age_seconds,
+                                       source.stale, source.error))
+
+    try:
+        result = build_check(
+            league, schedule, week, now, sources,
+            look_ahead=not args.no_look_ahead,
+        )
+    except CheckError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    for line in render_check(result, LEAGUE_TZ, league.name):
+        print(line)
+
+    if result.actionable:
+        return EXIT_ACTIONABLE
+    if result.all_clear:
+        return EXIT_ALL_CLEAR
+    return EXIT_INCOMPLETE
+
+
 def _resolve_week(league, cache: Cache, season: int):
     """Establish the current week, or explain why we refuse to guess.
 
@@ -218,6 +320,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "league":
         return _run_league(args, cache)
+
+    if args.command == "check":
+        return _run_check(args, cache)
 
     try:
         config = load_config(args.config)

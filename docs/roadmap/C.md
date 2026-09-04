@@ -199,13 +199,44 @@ Stage C's work is real and tested and **nothing runs it**.
 That also means there is no place for orchestration to live, so building D1 first would hide it
 inside a delivery module.
 
-- [ ] **C7.1** — `CheckResult`: source health (per-source age + stale), week provenance, the one
+- [x] **C7.1** — `CheckResult`: source health (per-source age + stale), week provenance, the one
       user team, findings with fix plans, next lock, and an explicit all-clear state.
-- [ ] **C7.2** — `ffcoach check --fixture … --now … --dry-run`, so the whole safety decision is
+- [x] **C7.2** — `ffcoach check --fixture … --now …`, so the whole safety decision is
       exercisable offline with no cookies.
-- [ ] **C7.3** — Exactly-one-user-team selection, with a clear error when zero or several match.
-- [ ] **C7.4** — Tests: end-to-end fixture check; a clean week produces an all-clear rather than
+- [x] **C7.3** — Exactly-one-user-team selection, with a clear error when zero or several match.
+- [x] **C7.4** — Tests: end-to-end fixture check; a clean week produces an all-clear rather than
       silence.
+
+**Outcome.** `src/ffcoach/check.py` (pure — inputs and `now` are passed in),
+`src/ffcoach/report/check_text.py` (terminal rendering, kept out of both the pure layer and
+the CLI), and `ffcoach check`. 399 Python tests, up from 359.
+
+**Three things the plan did not anticipate.**
+
+1. **An all-clear needs a fourth state, and silence is the bug.** A check that finds nothing is
+   not a check that found nothing wrong. If ESPN did not publish `lineupSlotCounts` the
+   empty-slot check never ran, and an empty starting slot produces exactly the same empty list
+   as a healthy roster. Same for a stale cached roster, a derived week, or a slot id ESPN
+   renamed. So `CheckResult` carries `blind_spots`, and `all_clear` requires **both** no
+   findings and nothing that stopped us looking — giving `problems` / `unverified` /
+   `all_clear`, which map straight onto what a notifier should do.
+
+2. **`pre_draft`, found by running it for real.** On 2026-09-03, four days before the draft,
+   the first live run produced **nine** confident "claim someone by Friday" findings — every
+   starting slot was legitimately empty because the draft had not happened. ESPN publishes
+   `draftDetail.drafted`; the checks now skip when it is `False`. It is tested with `is False`
+   rather than a truthiness check: an absent field is `None`, and treating absence as
+   "not drafted" would mute every alert for a season the first time ESPN renamed the field.
+
+3. **No `--dry-run` flag.** The plan named one, but nothing is delivered or written yet, so
+   there is nothing for it to suppress — a flag that suppresses nothing is the same broken
+   promise as `FixKind.FREE_AGENT_ADD` (D-046). It arrives with D1, when there is a send to
+   skip. `--now` carries the offline-testing weight instead, and refuses a naive instant
+   rather than reading it as UTC and shifting every deadline by hours.
+
+**Exit codes**, because a check runs unattended long before anyone reads its output:
+`0` all clear · `1` could not run · `2` problems you can still act on · `3` nothing actionable,
+but this run was not a clean look.
 
 **Deliberately not in C7:** the Week page. It consumes `CheckResult` (F1) and belongs to Stage F.
 Building the object first is the part of the review's resequencing the evidence supports.

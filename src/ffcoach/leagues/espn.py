@@ -198,6 +198,7 @@ def parse_league(raw: str, my_swid: str | None = None) -> League:
         teams=teams,
         roster_slots=_parse_roster_slots(payload),
         current_week=_parse_current_week(payload),
+        draft_completed=_parse_draft_completed(payload),
         waivers=waivers,
         lineup_lock=_parse_lineup_lock(payload),
         diagnostics=tuple(notes),
@@ -289,6 +290,20 @@ def _parse_roster_slots(payload: dict) -> dict[str, int]:
         if name and n > 0:
             out[name] = out.get(name, 0) + n
     return out
+
+
+def _parse_draft_completed(payload: dict) -> bool | None:
+    """Whether the draft has already happened, or `None` if ESPN did not say.
+
+    Only a literal boolean counts. A missing `draftDetail`, or a truthy string,
+    would otherwise become a confident answer to a question that gates whether
+    the lineup checks run at all.
+    """
+    detail = payload.get("draftDetail")
+    if not isinstance(detail, dict):
+        return None
+    drafted = detail.get("drafted")
+    return drafted if isinstance(drafted, bool) else None
 
 
 def _parse_current_week(payload: dict) -> int | None:

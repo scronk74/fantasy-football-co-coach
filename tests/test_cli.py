@@ -191,3 +191,145 @@ def test_league_missing_fixture_file_exits_nonzero(tmp_path):
         "--out", str(tmp_path / "league.json"),
     ])
     assert code == 1
+
+
+# --- `ffcoach check` (C7.2): the whole safety decision, offline ---
+
+SWID = "{ABCDEF12-3456-7890-ABCD-EF1234567890}"
+
+
+@pytest.fixture
+def checkable(tmp_path):
+    """A cache holding the NFL schedule, so `check` needs no network."""
+    from ffcoach.cache import Cache
+    from ffcoach.sources.schedule import _cache_key
+
+    db = tmp_path / "c.sqlite3"
+    cache = Cache(db)
+    cache.set(_cache_key(2025), (FIXTURES / "nfl_schedule_2025.csv").read_text(), 3600)
+    return db
+
+
+def run_check(db, *extra):
+    return main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(db),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "2025-10-01T09:00-04:00",
+        *extra,
+    ])
+
+
+def test_check_runs_end_to_end_with_no_cookies_and_no_network(checkable, capsys):
+    """The point of C7: the safety decision is exercisable offline.
+
+    Before this, `find_problems()` appeared exactly once under `src/` -- at its
+    own definition. Nothing ran the detection this whole stage built.
+    """
+    code = run_check(checkable)
+    out = capsys.readouterr().out
+    assert code == 2  # actionable problems exist in the fixture roster
+    assert "week 5 (from espn)" in out
+    assert "to fix" in out
+
+
+def test_check_reports_the_empty_slots_the_fixture_roster_has(checkable, capsys):
+    code = run_check(checkable)
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "EMPTY" in out
+    assert "no one in this slot" in out
+
+
+def test_check_names_the_next_lock_and_the_waiver_deadline(checkable, capsys):
+    run_check(checkable)
+    out = capsys.readouterr().out
+    assert "Next slot freezes:" in out
+    assert "Waivers next process:" in out
+
+
+def test_check_exits_nonzero_when_no_team_is_marked_as_yours(checkable, capsys):
+    """Never falls back to teams[0] -- that reports a stranger's roster as yours."""
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--now", "2025-10-01T09:00-04:00",
+    ])
+    assert code == 1
+    assert "no team" in capsys.readouterr().err
+
+
+def test_check_refuses_a_naive_now_rather_than_assuming_utc(checkable, capsys):
+    """Reading a naive instant as UTC shifts every deadline by hours."""
+    code = run_check(checkable, )
+    assert code == 2
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "2025-10-01T09:00",
+    ])
+    assert code == 1
+    assert "timezone" in capsys.readouterr().err
+
+
+def test_check_refuses_an_unparseable_now(checkable, capsys):
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "next tuesday",
+    ])
+    assert code == 1
+    assert "ISO-8601" in capsys.readouterr().err
+
+
+def test_check_refuses_rather_than_reporting_undated_findings(tmp_path, capsys):
+    """No usable schedule means no kickoffs, no byes and no deadlines.
+
+    Every finding this tool makes is timed off one, so an answer without a
+    schedule would read like a clean lineup rather than an unknown one.
+
+    The cached body here is a well-formed CSV that is not a schedule -- the
+    same shape as a captive portal or a truncated download, and the case that
+    a status-code check alone would wave through.
+    """
+    from ffcoach.cache import Cache
+    from ffcoach.sources.schedule import _cache_key
+
+    db = tmp_path / "c.sqlite3"
+    Cache(db).set(_cache_key(2025), "not,a,schedule\n1,2,3\n", 3600)
+
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(db),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "2025-10-01T09:00-04:00",
+    ])
+    assert code == 1
+    assert "no NFL schedule" in capsys.readouterr().err
+
+
+def test_a_check_after_every_kickoff_is_not_reported_as_actionable(checkable, capsys):
+    """January. Nothing is fixable, and the exit code must not say otherwise."""
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "2026-01-01T09:00-05:00",
+    ])
+    out = capsys.readouterr().out
+    assert code != 2
+    assert "LOCKED, too late" in out
