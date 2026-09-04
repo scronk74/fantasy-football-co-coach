@@ -47,13 +47,15 @@ uv run ffcoach league            # ESPN league/rosters -> web/data/league.json
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # no ESPN access needed
 uv run ffcoach refresh           # populate the cache only
 uv run ffcoach doctor            # config, cache, alert channel, last run
+uv run ffcoach serve             # pages at http://127.0.0.1:8765/
+uv run ffcoach serve --lan       # ...reachable from other devices (opt-in)
 uv run ffcoach schedule --print  # the launchd plist, without installing it
 uv run ffcoach schedule --install   # ...and load it
 uv run ffcoach schedule --status    # loaded? and has it actually run?
 ```
 
-View pages through VS Code Live Server, not by opening the file. `file://` blocks the
-`fetch()` of local JSON under CORS.
+View pages with `uv run ffcoach serve` (or any static server) — **not** by opening the
+file. `file://` blocks the `fetch()` of local JSON under CORS.
 
 ## Architecture
 
@@ -248,6 +250,24 @@ One trap already paid for: ntfy is published as **JSON to the server root**, not
 tool generates contains an em dash, so the header form raises `UnicodeEncodeError`
 before anything is sent. A test caught it; the first alert of the season would have
 otherwise.
+
+### `ffcoach serve` is rooted at `web/`, and that is the point
+
+`espn.yaml` and `notify.yaml` live in the **project root, one directory above the pages**.
+A server rooted there would publish session cookies that authenticate as the user and an
+ntfy topic anyone can publish to. So `web_root()` resolves and checks for `index.html`
+before a socket is opened, and **refuses rather than falling back** — the plausible
+fallback here is exactly the directory holding the credentials. Five traversal shapes are
+tested against a real running server, not asserted.
+
+`.json` is served `Cache-Control: no-store`; HTML is not. `check.json` is rewritten every
+scheduler run, and a cached copy would show last hour's findings with this hour's
+confidence — the same lie `SourceResult` prevents, arriving through the HTTP layer.
+
+`--lan` binds every interface and **says what that means in the output**, not only in
+`--help`: the pages carry the user's roster and league. Credentials never leave the
+unserved project root, but a roster is not something to broadcast unknowingly. Default is
+localhost.
 
 ### The scheduler: everything checkable is checked, because the rest cannot be
 

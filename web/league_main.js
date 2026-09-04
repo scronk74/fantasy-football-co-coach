@@ -36,7 +36,8 @@ async function load() {
       `Could not load data/league.json (${error.message}). ` +
       `Run "uv run ffcoach league --fixture tests/fixtures/espn_league.json" ` +
       `(or against your real league once it's set up), and make sure you are ` +
-      `viewing this through Live Server rather than opening the file directly.`;
+      `serving it with "uv run ffcoach serve" rather than opening the file ` +
+      `directly \u2014 file:// blocks the fetch.`;
   }
 }
 

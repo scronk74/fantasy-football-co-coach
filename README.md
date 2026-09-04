@@ -31,13 +31,20 @@ renders the page against sample data with no ESPN access at all.
 ## Use
 
 ```bash
-uv run ffcoach build     # fetch data and write web/data/board.json
+uv run ffcoach check      # this week's lineup: what to fix, and by when
 uv run ffcoach league     # fetch ESPN league data and write web/data/league.json
-uv run ffcoach doctor    # show what config and cache it sees
+uv run ffcoach build      # fetch ADP data and write web/data/board.json
+uv run ffcoach doctor     # show what config and cache it sees
 ```
 
-Then open `web/index.html` (draft board) or `web/league.html` (teams and
-rosters) with VS Code Live Server -- they're linked via the nav bar at the
+Then serve the pages and open the link it prints:
+
+```bash
+uv run ffcoach serve      # http://127.0.0.1:8765/
+```
+
+`index.html` is this week's action queue, `league.html` is teams and rosters,
+`draft.html` is the (legacy) draft board -- all linked from the nav bar at the
 top of each page. Opening a file directly will not work: `file://` blocks
 loading the JSON.
 

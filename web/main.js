@@ -107,7 +107,8 @@ async function load() {
     $("status").textContent =
       `Could not load data/board.json (${error.message}). ` +
       `Run "uv run ffcoach build", and make sure you are viewing this through ` +
-      `Live Server rather than opening the file directly.`;
+      `serving it with "uv run ffcoach serve" rather than opening the file ` +
+      `directly \u2014 file:// blocks the fetch.`;
   }
 }
 
