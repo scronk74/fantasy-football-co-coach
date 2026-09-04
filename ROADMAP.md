@@ -23,7 +23,7 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 531 Python + 53 JS, all green · CI gates both on every PR |
+| **Tests** | 538 Python + 53 JS, all green · CI gates both on every PR |
 | **Phase** | **C 7/7, D 3/5, E 2/6.** Detection runs, delivers, does not repeat itself, leaves a trace, and now reports its own failure. Next is E2 (launchd, once the iMac lands) and F1 (the Week page, once the draft fills a roster) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
@@ -191,7 +191,7 @@ flowchart LR
 | E2 | `launchd` install + per-window scheduling | **Next** | 🟢 V1 | **Sun 09-06** | D1, E1 | **H** | D-022 | ✅ 2026-08-29 |
 | E3 | Dead-man's switch (on-host **and** off-host) | Done | 🟢 V1 | — | E1 | M | D-023, R-3, **D-063** | ✅ 2026-09-04 |
 | E4 | Delivery-failure detection + fallback | Backlog | 🟢 V1 | Week 1 | D1, E1 | M | D-024 | ✅ 2026-08-29 |
-| E5 | `ffcoach init` + hardened `doctor` | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
+| E5 | `ffcoach init` + hardened `doctor` — **`notify --init` shipped** | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
 | E6 | Inactives sweep (~90m pre-kickoff) | Backlog | 🟢 V1 | Week 1 | E2 | M | D-026 | ✅ 2026-08-29 |
 | F0 | **`ffcoach serve` — local web server** | Backlog | 🟢 V1 | — | — | L | D-040 | ✅ 2026-08-29 |
 | F1 | Week dashboard — **becomes the landing page** | Backlog | 🟢 V1 | **Wed 09-09** | C4, F0 | M | D-027, D-028, **D-051** | ✅ 2026-09-03 |
@@ -350,7 +350,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 531 Python + 53 JS, all green; offline via committed fixtures |
+| Unit/integration | 538 Python + 53 JS, all green; offline via committed fixtures |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

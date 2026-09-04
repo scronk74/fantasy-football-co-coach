@@ -396,7 +396,7 @@ def test_notify_test_needs_the_flag(tmp_path, capsys):
     conf = tmp_path / "notify.yaml"
     conf.write_text(NOTIFY_YAML)
     assert main(["notify", "--notify-config", str(conf)]) == 1
-    assert "notify --test" in capsys.readouterr().err
+    assert "--init" in capsys.readouterr().err
 
 
 def test_a_guessable_topic_is_refused(checkable, tmp_path, capsys):
@@ -906,3 +906,79 @@ def test_doctor_states_the_exposure_when_no_heartbeat_is_configured(tmp_path, ca
     out = capsys.readouterr().out
     assert "Heartbeat: NOT configured" in out
     assert "nothing will tell you" in out
+
+
+# --- `ffcoach notify --init`: setup as a command, not a ritual ---
+
+
+def test_init_writes_a_config_with_an_unguessable_topic(tmp_path, capsys):
+    """Left to a human the topic becomes "ffcoach" or "steve-fantasy", and a
+    public ntfy topic has no authentication at all."""
+    from ffcoach.config import load_notify_config
+
+    conf = tmp_path / "notify.yaml"
+    assert main(["notify", "--init", "--notify-config", str(conf)]) == 0
+    loaded = load_notify_config(conf)
+    assert loaded.channel == "ntfy"
+    assert loaded.topic.startswith("ffcoach-")
+    assert len(loaded.topic) > 20
+
+
+def test_init_writes_a_file_the_loader_actually_accepts(tmp_path):
+    """The template and the parser must not drift apart."""
+    from ffcoach.config import load_notify_config
+
+    conf = tmp_path / "notify.yaml"
+    main(["notify", "--init", "--notify-config", str(conf)])
+    loaded = load_notify_config(conf)
+    assert loaded.min_consecutive_failures == 3
+    assert loaded.max_silence_hours == 12
+    assert loaded.has_heartbeat is False
+
+
+def test_two_inits_never_produce_the_same_topic(tmp_path):
+    from ffcoach.config import load_notify_config
+
+    topics = set()
+    for i in range(3):
+        conf = tmp_path / f"n{i}.yaml"
+        main(["notify", "--init", "--notify-config", str(conf)])
+        topics.add(load_notify_config(conf).topic)
+    assert len(topics) == 3
+
+
+def test_init_refuses_to_clobber_an_existing_config(tmp_path, capsys):
+    """Overwriting changes the topic out from under a subscribed phone.
+
+    Alerts would go on being "delivered" to a topic nobody is listening to --
+    the worst possible failure for this particular file.
+    """
+    conf = tmp_path / "notify.yaml"
+    main(["notify", "--init", "--notify-config", str(conf)])
+    before = conf.read_text()
+    assert main(["notify", "--init", "--notify-config", str(conf)]) == 1
+    assert conf.read_text() == before
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_force_replaces_it_deliberately(tmp_path):
+    conf = tmp_path / "notify.yaml"
+    main(["notify", "--init", "--notify-config", str(conf)])
+    before = conf.read_text()
+    assert main(["notify", "--init", "--force", "--notify-config", str(conf)]) == 0
+    assert conf.read_text() != before
+
+
+def test_init_prints_the_topic_and_the_next_command(tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    main(["notify", "--init", "--notify-config", str(conf)])
+    out = capsys.readouterr().out
+    assert "https://ntfy.sh/ffcoach-" in out
+    assert "notify --test" in out
+    assert "credential" in out
+
+
+def test_the_config_is_not_world_readable(tmp_path):
+    conf = tmp_path / "notify.yaml"
+    main(["notify", "--init", "--notify-config", str(conf)])
+    assert conf.stat().st_mode & 0o077 == 0

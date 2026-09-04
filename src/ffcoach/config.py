@@ -114,6 +114,73 @@ class NotifyConfig:
         return bool(self.heartbeat_url)
 
 
+# Written by `ffcoach notify --init`. Kept beside the loader so the file it
+# writes and the file it reads cannot drift apart.
+NOTIFY_TEMPLATE = """\
+# Written by `ffcoach notify --init`. Gitignored.
+#
+# The ntfy topic below IS the credential: a public ntfy topic has no
+# authentication, so anyone who knows the name can read your alerts and publish
+# to them. Do not paste it anywhere.
+
+channel: ntfy
+
+ntfy:
+  topic: "{topic}"
+  # Only change this if you self-host ntfy.
+  server: "https://ntfy.sh"
+
+# The on-host dead-man's switch. Alerts you when ffcoach itself stops working --
+# the expired-cookie case, where the check errors and sends nothing, which looks
+# exactly like a clean week.
+watchdog:
+  max_silence_hours: 12
+  min_consecutive_failures: 3
+
+# The off-host half, and the only thing that survives this machine dying.
+# Point `url` at any service where the ABSENCE of a ping is the alert:
+# healthchecks.io (free), Cronitor, Better Stack, self-hosted Uptime Kuma.
+# Leave it blank and a power cut or a network drop is completely silent --
+# `ffcoach doctor` will say so on every run until you fill it in.
+heartbeat:
+  url: ""
+  # Optional. Never guessed from `url`: appending "/fail" is one vendor's
+  # convention and silently wrong for the others.
+  fail_url: ""
+"""
+
+
+def new_topic() -> str:
+    """An unguessable ntfy topic.
+
+    `secrets`, not `random`: this is a credential, and a predictable one lets a
+    stranger read your alerts and publish fake ones to your phone. 12 bytes of
+    URL-safe entropy is 96 bits, which is not enumerable.
+    """
+    import secrets
+
+    return f"ffcoach-{secrets.token_urlsafe(12)}"
+
+
+def write_notify_config(path: Path, topic: str, force: bool = False) -> None:
+    """Create `notify.yaml`. Refuses to clobber an existing one.
+
+    Overwriting would silently change the topic out from under a phone that is
+    already subscribed -- alerts would go on being "delivered" to a topic
+    nobody is listening to, which is the worst possible failure for this file.
+    """
+    path = Path(path)
+    if path.exists() and not force:
+        raise ConfigError(
+            f"{path} already exists; overwriting would change the topic your "
+            "phone is subscribed to. Pass --force if that is what you want."
+        )
+    path.write_text(NOTIFY_TEMPLATE.format(topic=topic))
+    # Alerts are not secret in the way a password is, but the topic is, and a
+    # world-readable credential in a home directory is a free win to avoid.
+    path.chmod(0o600)
+
+
 def load_notify_config(path: Path) -> NotifyConfig:
     path = Path(path)
     if not path.exists():
