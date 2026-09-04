@@ -10,7 +10,12 @@ from pathlib import Path
 from ffcoach.advisors.draft import build_board
 from ffcoach.cache import Cache
 from ffcoach.check import LEAGUE_TZ, CheckError, SourceHealth, build_check
-from ffcoach.config import ConfigError, load_config, load_espn_credentials
+from ffcoach.config import (
+    ConfigError,
+    load_config,
+    load_espn_credentials,
+    load_notify_config,
+)
 from ffcoach.leagues.espn import parse_league
 from ffcoach.leagues.espn_client import EspnUnavailable, fetch_league
 from ffcoach.model.week import (
@@ -20,6 +25,9 @@ from ffcoach.model.week import (
     WeekUnavailable,
     resolve_week,
 )
+from ffcoach.notify.base import DeliveryError, Notification
+from ffcoach.notify.message import notification_for
+from ffcoach.notify.ntfy import ConsoleNotifier, NtfyNotifier
 from ffcoach.report.build import board_payload, league_payload, write_board
 from ffcoach.report.check_text import render_check
 from ffcoach.sources.schedule import ScheduleUnavailable, fetch_schedule, parse_schedule
@@ -45,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
         ("doctor", "report config and cache state"),
         ("league", "fetch ESPN league/roster data and write web/data/league.json"),
         ("check", "report whether this week's lineup needs fixing"),
+        ("notify", "check the notification channel itself"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--config", default="league.yaml", type=Path)
@@ -66,6 +75,24 @@ def _parser() -> argparse.ArgumentParser:
                 action="store_true",
                 help="skip next week's uncovered byes",
             )
+            p.add_argument(
+                "--notify",
+                action="store_true",
+                help="send the result to the configured channel",
+            )
+            p.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="with --notify, print the message instead of sending it",
+            )
+        if name == "notify":
+            p.add_argument(
+                "--test",
+                action="store_true",
+                help="send one test message, to prove the channel works before you rely on it",
+            )
+        if name in ("check", "notify"):
+            p.add_argument("--notify-config", default=Path("notify.yaml"), type=Path)
         if name == "league":
             p.add_argument("--out", default=Path("web/data/league.json"), type=Path)
         if name in ("league", "check"):
@@ -229,6 +256,60 @@ EXIT_ACTIONABLE = 2       # something you can still fix
 EXIT_INCOMPLETE = 3       # nothing actionable, but this run was not a clean look
 
 
+def _notifier(args):
+    """The configured channel, or `None` after printing why not.
+
+    `--dry-run` returns a real `ConsoleNotifier` rather than a flag the caller
+    branches on, so the dry run walks the same path as a live send and cannot
+    quietly stop matching it. It still loads the config first: a dry run that
+    skips validation would happily "succeed" against a broken topic.
+    """
+    try:
+        conf = load_notify_config(args.notify_config)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+    if args.dry_run:
+        return ConsoleNotifier()
+    try:
+        return NtfyNotifier(conf.topic, conf.server)
+    except DeliveryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return None
+
+
+def _run_notify(args) -> int:
+    """Prove the channel works before anything depends on it."""
+    if not args.test:
+        print("error: nothing to do; try `ffcoach notify --test`", file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        conf = load_notify_config(args.notify_config)
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        notifier = NtfyNotifier(conf.topic, conf.server)
+        notifier.send(
+            Notification(
+                title="ffcoach test",
+                body=(
+                    "If you can read this, alerts will reach you. "
+                    "This is the only message ffcoach sends that is not about your lineup."
+                ),
+                tier="interrupt",
+            )
+        )
+    except DeliveryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    # Delivered is not the same as received: ntfy accepts a publish to a topic
+    # nobody is subscribed to, so the only real confirmation is the user's phone.
+    print(f"Sent one test message via {conf.channel}. Check your phone.")
+    print("Nothing arrived? The topic in notify.yaml is not the one you subscribed to.")
+    return EXIT_ALL_CLEAR
+
+
 def _run_check(args, cache: Cache) -> int:
     """Compose the whole safety decision and say what it concluded."""
     if args.now:
@@ -284,6 +365,28 @@ def _run_check(args, cache: Cache) -> int:
     for line in render_check(result, LEAGUE_TZ, league.name):
         print(line)
 
+    if args.notify:
+        notifier = _notifier(args)
+        if notifier is None:
+            return EXIT_ERROR
+        note = notification_for(result, LEAGUE_TZ)
+        if note is None:
+            # D-016: zero interrupts in a clean week is the system working.
+            # Said out loud so "nothing sent" is never confused with a failure
+            # to send -- which is exactly what the dead-man's switch exists for.
+            print(f"Nothing to send ({result.status}); no message dispatched.")
+        else:
+            try:
+                notifier.send(note)
+            except DeliveryError as exc:
+                # A check that ran and could not be delivered is a different
+                # problem from a check that could not run (D-024), and the exit
+                # code has to keep saying there is something to fix.
+                print(f"error: {exc}", file=sys.stderr)
+                return EXIT_ERROR
+            if notifier.name != "console":
+                print(f"Sent via {notifier.name}.")
+
     if result.actionable:
         return EXIT_ACTIONABLE
     if result.all_clear:
@@ -324,6 +427,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "check":
         return _run_check(args, cache)
 
+    if args.command == "notify":
+        return _run_notify(args)
+
     try:
         config = load_config(args.config)
     except ConfigError as exc:
@@ -335,6 +441,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Format:   {config.scoring}, {config.teams} teams")
         print(f"Your pick: {config.my_pick} -> next {config.next_pick_after(config.my_pick)}")
         print(f"Cache:    {args.cache}")
+        # Whether alerts have somewhere to go, never where. The topic is the
+        # credential, and `doctor` output is what gets pasted into a bug report.
+        try:
+            notify_conf = load_notify_config(Path("notify.yaml"))
+            print(f"Alerts:   {notify_conf.channel} configured ({notify_conf.server})")
+        except ConfigError as exc:
+            print(f"Alerts:   not configured — {exc}")
         return 0
 
     try:

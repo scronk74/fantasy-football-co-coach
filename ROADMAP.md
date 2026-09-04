@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 399 Python + 53 JS, all green · CI gates both on every PR |
-| **Phase** | **Stage C complete (7/7).** Detection is finally reachable: `ffcoach check` runs the whole safety decision. Next is D1 (the notifier) and F1 (the Week page) |
+| **Tests** | 436 Python + 53 JS, all green · CI gates both on every PR |
+| **Phase** | **Stage C 7/7, D 2/5.** Detection runs and delivers: `ffcoach check --notify` reaches a phone. Next is D3 (repeat policy — required before any scheduler) and F1 (the Week page) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -112,7 +112,7 @@ flowchart LR
     end
     subgraph SD["D · Notifications"]
         direction TB
-        D1["D1 Notifier + channels"]:::confirmed
+        D1["D1 Notifier + ntfy<br/>DONE"]:::confirmed
         D2["D2 message rendering"]:::confirmed
         D3["D3 quiet hours + 2-strike"]:::confirmed
         D4["D4 alert control config"]:::confirmed
@@ -182,11 +182,11 @@ flowchart LR
 | C5 | Read lineup-lock league setting | Done | 🟢 V1 | — | B1 | M | D-015 | ✅ 2026-08-29 |
 | C6 | **Truth repairs from the 2026-08-31 review** | Done | 🟢 V1 | — | C5 | M | D-044…D-048 | ✅ 2026-08-31 |
 | C7 | **`CheckResult` + `ffcoach check`** | Done | 🟢 V1 | — | C6 | **H** | D-049, **D-054** | ✅ 2026-09-03 |
-| D1 | `Notifier` interface + **ntfy / Pushover first** | Backlog | 🟢 V1 | **Wed 09-09** | C7 | M | D-016, D-042 | ✅ 2026-09-03 |
-| D2 | Message rendering (160-char SMS budget) | Backlog | 🟢 V1 | Week 1 | D1 | L | D-017 | ✅ 2026-08-29 |
-| D3 | Quiet hours + two-strike repeat policy | Backlog | 🟢 V1 | Week 1 | D1 | M | D-018, D-019 | ✅ 2026-08-29 |
+| D1 | `Notifier` interface + **ntfy** | Done | 🟢 V1 | — | C7 | M | D-016, D-042, **D-057, D-058** | ✅ 2026-09-03 |
+| D2 | Message rendering (~~160-char SMS budget~~) | Done | 🟢 V1 | — | D1 | L | D-017, **D-059** | ✅ 2026-09-03 |
+| D3 | Quiet hours + two-strike repeat policy | **Next** | 🟢 V1 | **before E2** | D1 | M | D-018, D-019, **D-057** | ✅ 2026-09-03 |
 | D4 | Per-alert enable / tier / threshold config | Backlog | 🟢 V1 | Week 1 | D1 | L | D-020 | ✅ 2026-08-29 |
-| D5 | Channel bake-off (`notify --test`) | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
+| D5 | Channel bake-off — `ffcoach notify --test` shipped with D1 | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
 | E1 | **Structured run logging** (JSONL + SQLite history) | Backlog | 🟢 V1 | Week 1 | D1 | M | D-021, D-041 | ✅ 2026-08-29 |
 | E2 | `launchd` install + per-window scheduling | Backlog | 🟢 V1 | Week 1 | D1 | **H** | D-022 | ✅ 2026-08-29 |
 | E3 | Dead-man's switch | Backlog | 🟢 V1 | Week 1 | E1, E2 | M | D-023 | ✅ 2026-08-29 |
@@ -210,14 +210,16 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 0/5 · E 0/6 · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 15/42 steps done (36%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 2/5 (40%) · E 0/6 · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 17/42 steps done (40%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
 > detection had no production caller. **C7 closed that on 2026-09-03** — `ffcoach check`
 > composes it and exits with a status code — so the discount that mattered most is gone;
-> nothing yet *delivers* the result, which is D1. **D-050 adds the second discount.** Three of Stage A's four steps
+> D1 and D2 followed the same day, so the result now reaches a phone. What is
+> still missing is everything that makes it *run without being asked*: D3's repeat
+> policy, then E1's logging and E2's scheduling. **D-050 adds the second discount.** Three of Stage A's four steps
 > (A2, A3, and most of the report layer feeding `board.json`) serve a draft board the user
 > has said he does not want. Counting them as V1 progress inflates a number that was already
 > measuring code written rather than anything runnable. Left un-reweighted so the history
@@ -318,6 +320,10 @@ flowchart LR
 - **D-055 — Before the draft, an empty roster is not a lineup problem.** ✅ *(2026-09-03)*. Found by running C7 against the live league four days before the draft: **nine** confident "claim someone by Friday" findings, one per empty starting slot, for a roster the draft would fill on Monday. Nine wrong alerts on the first night is how a channel becomes something you mute. ESPN publishes `draftDetail.drafted`; the checks skip when it is `False`, giving a fourth status `pre_draft`. Tested with `is False` and not truthiness: an absent field is `None`, and treating absence as "not drafted" would mute every alert for a season the first time ESPN renamed the field.
 - **D-056 — No `--dry-run` until there is a send to skip.** ✅ *(2026-09-03)*. C7's plan named the flag. Nothing is delivered or written yet, so it would suppress nothing — the same broken promise as an unemittable `FixKind` (D-046). It arrives with D1. `--now` carries the offline-testing weight instead, and **refuses a naive instant** rather than reading it as UTC and shifting every deadline by hours.
 
+- **D-057 — A blind spot never sends an alert on its own.** ✅ *(2026-09-03)*. `CheckResult.blind_spots` (D-054) is exactly the kind of thing that feels like it should notify, and must not — yet. A stale ESPN fetch persists across *every* run of a day, so until D3's two-strike repeat policy exists, sending on blind spots alone is a spam machine, and a channel you mute is strictly worse than one that is occasionally quiet. Blind spots ride *inside* a message that was going out anyway, so if you are being told something you also learn what was uncertain. **This is why D3 must land before E2:** the moment a scheduler runs the check unattended, "sends once per problem" stops being true and starts being "sends every fifteen minutes". *Affects: D3, E2.*
+- **D-058 — The ntfy topic name is a credential.** ✅ *(2026-09-03)*. A public ntfy topic has no authentication of any kind: whoever knows the name can read your alerts and publish to them. So `notify.yaml` is gitignored like `espn.yaml`, obvious names (`ffcoach`, `fantasy`, `test`, `alerts`) are refused at load rather than merely discouraged, `doctor` reports that a channel is configured and never which topic, and `DeliveryError` messages omit it — an error string is the thing most likely to be pasted into an issue.
+- **D-059 — The 160-character budget is retired, and ntfy is published as JSON.** ✅ *(2026-09-03)*. D-017's budget existed for an SMS gateway that D-042 deferred; ntfy has no length ceiling, so messages name the replacement inline and the fix needs no second screen. Long lists truncate at five with an exact count and a pointer, so nothing is hidden. Separately: publishing as `{server}/{topic}` with a `Title:` header **does not work** — HTTP headers are ASCII and every generated title contains an em dash, so it raises `UnicodeEncodeError` before sending. JSON to the server root is UTF-8. Caught by a test rather than by the first alert of the season.
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -337,7 +343,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 399 Python + 53 JS, all green; offline via committed fixtures |
+| Unit/integration | 436 Python + 53 JS, all green; offline via committed fixtures |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

@@ -113,3 +113,53 @@ def test_espn_credentials_missing_keys_raises_config_error(tmp_path):
     bad = ESPN_VALID.replace('swid: "{ABCDEF12-3456-7890-ABCD-EF1234567890}"', "")
     with pytest.raises(ConfigError, match="missing required keys"):
         load_espn_credentials(write_espn(tmp_path, bad))
+
+
+# --- notification config: the topic is a credential ---
+
+from ffcoach.config import load_notify_config  # noqa: E402
+
+
+def write(tmp_path, text):
+    p = tmp_path / "notify.yaml"
+    p.write_text(text)
+    return p
+
+
+def test_a_valid_ntfy_config_loads(tmp_path):
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough'}\n")
+    conf = load_notify_config(p)
+    assert conf.channel == "ntfy"
+    assert conf.topic == "x8Fj2kQ-longenough"
+    assert conf.server == "https://ntfy.sh"
+
+
+def test_a_self_hosted_server_overrides_the_default(tmp_path):
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: 'x8Fj2kQ-longenough', server: 'https://n.example.com'}\n")
+    assert load_notify_config(p).server == "https://n.example.com"
+
+
+def test_a_missing_file_names_the_example_to_copy(tmp_path):
+    with pytest.raises(ConfigError, match="notify.example.yaml"):
+        load_notify_config(tmp_path / "absent.yaml")
+
+
+def test_an_unsupported_channel_is_refused_rather_than_ignored(tmp_path):
+    """Silently doing nothing would look exactly like a quiet week."""
+    p = write(tmp_path, "channel: carrier-pigeon\nntfy: {topic: 'x'}\n")
+    with pytest.raises(ConfigError, match="unknown notification channel"):
+        load_notify_config(p)
+
+
+def test_an_empty_topic_is_refused(tmp_path):
+    p = write(tmp_path, "channel: ntfy\nntfy: {topic: '   '}\n")
+    with pytest.raises(ConfigError, match="topic is required"):
+        load_notify_config(p)
+
+
+def test_a_guessable_topic_is_refused(tmp_path):
+    """A public ntfy topic has no authentication at all: the name is the key."""
+    for guessable in ("ffcoach", "fantasy", "test", "alerts"):
+        p = write(tmp_path, f"channel: ntfy\nntfy: {{topic: '{guessable}'}}\n")
+        with pytest.raises(ConfigError, match="guessable"):
+            load_notify_config(p)

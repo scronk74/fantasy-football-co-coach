@@ -333,3 +333,76 @@ def test_a_check_after_every_kickoff_is_not_reported_as_actionable(checkable, ca
     out = capsys.readouterr().out
     assert code != 2
     assert "LOCKED, too late" in out
+
+
+# --- D1: delivery ---
+
+NOTIFY_YAML = """
+channel: ntfy
+ntfy:
+  topic: "a-long-unguessable-topic-name"
+"""
+
+
+def test_check_dry_run_prints_the_message_it_would_have_sent(checkable, tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    code = run_check(checkable, "--notify", "--dry-run", "--notify-config", str(conf))
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "[interrupt]" in out
+    assert "lineup fixes — week 5" in out
+
+
+def test_a_dry_run_still_validates_the_channel_config(checkable, tmp_path, capsys):
+    """A dry run that skips validation "succeeds" against a broken topic."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text("channel: ntfy\nntfy: {topic: ''}\n")
+    code = run_check(checkable, "--notify", "--dry-run", "--notify-config", str(conf))
+    assert code == 1
+    assert "topic is required" in capsys.readouterr().err
+
+
+def test_notify_without_a_config_file_exits_nonzero(checkable, tmp_path, capsys):
+    code = run_check(
+        checkable, "--notify", "--dry-run", "--notify-config", str(tmp_path / "nope.yaml")
+    )
+    assert code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_a_run_with_nothing_to_send_says_so_rather_than_staying_quiet(
+    checkable, tmp_path, capsys
+):
+    """"Nothing sent" and "failed to send" must never look alike."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    code = main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--my-swid", SWID,
+        "--now", "2026-01-01T09:00-05:00",   # every kickoff is past
+        "--notify", "--dry-run",
+        "--notify-config", str(conf),
+    ])
+    out = capsys.readouterr().out
+    assert code == 3
+    assert "Nothing to send" in out
+
+
+def test_notify_test_needs_the_flag(tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    assert main(["notify", "--notify-config", str(conf)]) == 1
+    assert "notify --test" in capsys.readouterr().err
+
+
+def test_a_guessable_topic_is_refused(checkable, tmp_path, capsys):
+    """A public ntfy topic has no auth; `ffcoach` is not a secret."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text("channel: ntfy\nntfy: {topic: 'ffcoach'}\n")
+    code = run_check(checkable, "--notify", "--dry-run", "--notify-config", str(conf))
+    assert code == 1
+    assert "guessable" in capsys.readouterr().err

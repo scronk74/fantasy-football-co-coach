@@ -33,7 +33,10 @@ npm test                         # browser logic; installs no npm packages
 Node 26, which treats a bare path as a module entry point rather than a directory to scan.
 
 ```bash
+uv run ffcoach notify --test     # prove alerts reach your phone before relying on them
 uv run ffcoach check             # this week's lineup: what to fix, by when
+uv run ffcoach check --notify    # ...and send it
+uv run ffcoach check --notify --dry-run   # ...and print what it would have sent
 uv run ffcoach check --fixture tests/fixtures/espn_league.json \
       --my-swid '{ABCDEF12-3456-7890-ABCD-EF1234567890}' --season 2025 \
       --now 2025-10-01T09:00-04:00        # the whole decision, offline
@@ -183,6 +186,45 @@ Exit codes, because the check runs unattended long before anyone reads its outpu
 `0` all clear · `1` could not run · `2` still actionable · `3` not a clean look.
 `--now` refuses a naive instant rather than reading it as UTC and moving every deadline.
 
+### Delivery: silence is the common case, and it has to be deliberate
+
+`notify/` is three small files: `base.py` (the `Notification` + `Notifier`
+interface), `message.py` (pure — `CheckResult` in, `Notification` or `None` out),
+and `ntfy.py` (the one channel, plus `ConsoleNotifier` for `--dry-run`).
+
+`Notification` carries a **tier** — `interrupt` or `digest` — never a raw priority
+number, because every service scales urgency differently (ntfy 1–5, Pushover −2..2).
+Mapping a tier onto a service's scale is the channel's job; deciding what deserves to
+buzz a phone during dinner is not. There are deliberately only two tiers: a third is a
+slider nobody calibrates, and the interrupt tier is only worth anything while it stays
+rare.
+
+**What is never sent**, each for its own reason:
+
+- a clean week — zero interrupts is the system working (D-016)
+- `pre_draft` — there is no roster yet
+- locked findings — reported on screen (D-011), useless on a phone
+- **blind spots alone** (D-057) — a stale ESPN fetch persists across every run of a
+  day, and until D3's repeat policy exists that is a spam machine. They ride *inside*
+  a message that was going out anyway
+
+`--dry-run` returns a real `ConsoleNotifier` rather than setting a flag the caller
+branches on, so the dry run walks the same path as a live send and cannot drift from
+it. It still loads and validates the config: a dry run that skipped validation would
+happily "succeed" against a broken topic.
+
+**The ntfy topic name is the credential.** A public topic has no authentication at
+all — whoever knows the name can read your alerts and publish to them. So `notify.yaml`
+is gitignored, obvious names are refused at load, `doctor` reports that a channel is
+configured and never which topic, and `DeliveryError` messages omit it because an error
+string is the thing most likely to get pasted into an issue.
+
+One trap already paid for: ntfy is published as **JSON to the server root**, not as
+`{server}/{topic}` with a `Title:` header. HTTP headers are ASCII, and every title this
+tool generates contains an em dash, so the header form raises `UnicodeEncodeError`
+before anything is sent. A test caught it; the first alert of the season would have
+otherwise.
+
 ### Deadlines: the kind of fix comes before the time
 
 `model/deadlines.py` returns a `FixPlan` (`BENCH_SWAP` / `WAIVER_CLAIM` /
@@ -243,6 +285,8 @@ These come from direct user feedback and have executable assertions behind them:
 ## Config
 
 - `league.yaml` — league settings. Gitignored; copy from `league.example.yaml`.
+- `notify.yaml` — where alerts go. Gitignored; copy from `notify.example.yaml`. The ntfy
+  topic name is a credential: a public topic has no auth, so it must be long and random.
 - `espn.yaml` — ESPN `espn_s2` / `SWID` session cookies. Gitignored; copy from
   `espn.example.yaml`. Kept **separate** from `league.yaml` so that file stays safe to share
   or screenshot. These cookies authenticate as the user; there is no documented expiry and
