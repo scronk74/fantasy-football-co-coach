@@ -85,3 +85,24 @@ def test_fetch_raises_when_failing_with_no_cache(tmp_path):
     cache = Cache(tmp_path / "c.sqlite3")
     with pytest.raises(EspnUnavailable, match="500"):
         fetch_league("999", 2026, "s2", "{swid}", cache, client=client_returning("", status=500))
+
+
+def test_the_cache_key_distinguishes_different_view_sets():
+    """Adding a view to VIEWS must not keep serving the body from before it.
+
+    The request changed and the key did not, so the cache answered with a
+    response that simply did not contain the new field -- and the fetch looked
+    like it had succeeded.
+    """
+    from ffcoach.leagues.espn_client import _cache_key
+
+    a = _cache_key("9", 2026, ("mTeam", "mRoster"))
+    b = _cache_key("9", 2026, ("mTeam", "mRoster", "mMatchup"))
+    assert a != b
+
+
+def test_the_cache_key_ignores_the_order_views_are_listed_in():
+    """Reordering the tuple is not a different question."""
+    from ffcoach.leagues.espn_client import _cache_key
+
+    assert _cache_key("9", 2026, ("a", "b")) == _cache_key("9", 2026, ("b", "a"))

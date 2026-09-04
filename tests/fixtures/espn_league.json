@@ -162,5 +162,35 @@
   "scoringPeriodId": 5,
   "status": {
     "currentMatchupPeriod": 5
-  }
+  },
+  "schedule": [
+    {
+      "id": 1,
+      "matchupPeriodId": 5,
+      "playoffTierType": "NONE",
+      "winner": "UNDECIDED",
+      "home": {
+        "teamId": 1,
+        "totalPoints": 0.0
+      },
+      "away": {
+        "teamId": 2,
+        "totalPoints": 0.0
+      }
+    },
+    {
+      "id": 2,
+      "matchupPeriodId": 6,
+      "playoffTierType": "NONE",
+      "winner": "UNDECIDED",
+      "home": {
+        "teamId": 2,
+        "totalPoints": 0.0
+      },
+      "away": {
+        "teamId": 1,
+        "totalPoints": 0.0
+      }
+    }
+  ]
 }

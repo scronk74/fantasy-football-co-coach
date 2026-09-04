@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 
 from ffcoach.leagues.base import (
+    Matchup,
     PER_PLAYER_LOCKTIME,
     UNKNOWN,
     League,
@@ -239,6 +240,8 @@ def parse_league(raw: str, my_swid: str | None = None) -> League:
         roster_slots=_parse_roster_slots(payload),
         current_week=_parse_current_week(payload),
         draft_completed=_parse_draft_completed(payload),
+        matchups=_parse_matchups(payload, notes),
+        current_matchup_period=_parse_matchup_period(payload),
         waivers=waivers,
         lineup_lock=_parse_lineup_lock(payload),
         diagnostics=tuple(notes),
@@ -330,6 +333,60 @@ def _parse_roster_slots(payload: dict) -> dict[str, int]:
         if name and n > 0:
             out[name] = out.get(name, 0) + n
     return out
+
+
+def _parse_matchup_period(payload: dict) -> int | None:
+    """`status.currentMatchupPeriod`, or None.
+
+    Never falls back to `scoringPeriodId`: they agree all regular season and
+    diverge in the playoffs, where one matchup period covers several scoring
+    weeks. A fallback would be right when it did not matter and wrong when it
+    did.
+    """
+    status = payload.get("status")
+    if not isinstance(status, dict):
+        return None
+    value = status.get("currentMatchupPeriod")
+    return value if isinstance(value, int) and value > 0 else None
+
+
+def _parse_matchups(payload: dict, notes: list[str]) -> tuple[Matchup, ...]:
+    """Every head-to-head pairing ESPN publishes for the season.
+
+    A side ESPN omits is a bye in an odd-sized league, and is kept as an empty
+    id rather than dropped -- so "you have no opponent this week" stays
+    distinguishable from "we could not read the matchups at all".
+    """
+    schedule = payload.get("schedule")
+    if not isinstance(schedule, list):
+        return ()
+
+    out: list[Matchup] = []
+    skipped = 0
+    for row in schedule:
+        if not isinstance(row, dict):
+            skipped += 1
+            continue
+        period = row.get("matchupPeriodId")
+        if not isinstance(period, int):
+            skipped += 1
+            continue
+
+        def side(key: str) -> str:
+            value = row.get(key)
+            if isinstance(value, dict) and value.get("teamId") is not None:
+                return str(value["teamId"])
+            return ""
+
+        home, away = side("home"), side("away")
+        if not home and not away:
+            skipped += 1
+            continue
+        out.append(Matchup(period=period, home_team_id=home, away_team_id=away))
+
+    if skipped:
+        notes.append(f"{skipped} matchup rows could not be read; opponents may be missing")
+    return tuple(out)
 
 
 def _parse_draft_completed(payload: dict) -> bool | None:

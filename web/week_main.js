@@ -18,8 +18,14 @@ async function load() {
     const team = payload.team_abbrev
       ? `${payload.team} (${payload.team_abbrev})`
       : payload.team;
+    // "opponent unknown" rather than a blank: a missing name here means a bye,
+    // a playoff period we could not read, or an id with no team -- all worth
+    // saying out loud rather than silently omitting.
+    const versus = payload.opponent
+      ? `vs ${payload.opponent}`
+      : "opponent unknown";
     $("subtitle").textContent =
-      `${team} · ${payload.league} · week from ${payload.week_source}`;
+      `${team} ${versus} · ${payload.league} · week from ${payload.week_source}`;
     $("badge").innerHTML = statusBadge(payload.status);
     $("headline").textContent = headline(payload);
     $("body").innerHTML = weekHtml(payload);
