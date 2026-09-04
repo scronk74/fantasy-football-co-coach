@@ -87,6 +87,56 @@ def load_espn_credentials(path: Path) -> EspnCredentials:
     )
 
 
+@dataclass(frozen=True)
+class NotifyConfig:
+    """Where alerts go. Its own file for the same reason `espn.yaml` is.
+
+    A public ntfy topic has **no authentication**: whoever knows the name can
+    read your alerts and publish to them. The name is therefore a credential,
+    it lives in a gitignored file, and nothing prints it -- `doctor` reports
+    that a channel is configured, never which topic.
+    """
+
+    channel: str
+    topic: str = ""
+    server: str = "https://ntfy.sh"
+
+
+def load_notify_config(path: Path) -> NotifyConfig:
+    path = Path(path)
+    if not path.exists():
+        raise ConfigError(
+            f"notification config not found: {path} "
+            "(copy notify.example.yaml and pick an unguessable topic)"
+        )
+
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"could not parse {path}: {exc}") from exc
+
+    channel = str(raw.get("channel", "")).lower()
+    if channel != "ntfy":
+        raise ConfigError(f"unknown notification channel {channel!r}; supported: ntfy")
+
+    section = raw.get("ntfy") or {}
+    topic = str(section.get("topic", "")).strip()
+    if not topic:
+        raise ConfigError(f"{path}: ntfy.topic is required and must not be empty")
+    # A topic anyone could guess is a topic anyone can read and publish to.
+    if topic in ("ffcoach", "fantasy", "test", "alerts"):
+        raise ConfigError(
+            f"{path}: ntfy.topic {topic!r} is guessable; a public ntfy topic has "
+            "no authentication, so use a long random name"
+        )
+
+    return NotifyConfig(
+        channel=channel,
+        topic=topic,
+        server=str(section.get("server") or "https://ntfy.sh"),
+    )
+
+
 def load_config(path: Path) -> LeagueConfig:
     path = Path(path)
     if not path.exists():

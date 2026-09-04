@@ -1,0 +1,17 @@
+# Copy to notify.yaml (gitignored) and pick your own topic.
+#
+# A public ntfy topic has NO authentication. Anyone who knows the name can read
+# your alerts and publish to them, so the name IS the credential: make it long
+# and random, and do not paste it anywhere.
+#
+#   1. Install the ntfy app (iOS / Android) or open https://ntfy.sh in a browser.
+#   2. Generate a topic:  python3 -c "import secrets; print('ffcoach-'+secrets.token_urlsafe(12))"
+#   3. Subscribe to that exact topic in the app.
+#   4. Put it below, then:  uv run ffcoach notify --test
+
+channel: ntfy
+
+ntfy:
+  topic: "replace-me-with-something-unguessable"
+  # Only change this if you self-host ntfy.
+  server: "https://ntfy.sh"

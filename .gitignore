@@ -228,5 +228,8 @@ league.yaml
 # session credentials, not template — edit your own after copying espn.example.yaml
 espn.yaml
 
+# the ntfy topic name IS the credential — a public topic has no auth at all
+notify.yaml
+
 # visual brainstorming scratch
 .superpowers/
