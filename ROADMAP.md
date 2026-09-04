@@ -23,7 +23,7 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 577 Python + 84 JS, all green · CI gates both on every PR |
+| **Tests** | 583 Python + 87 JS, all green · CI gates both on every PR |
 | **Phase** | **C 7/7, D 3/5, E 3/6, F 1/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. The Week page is the front door. Next: the first real run after Monday's draft, then E6 (inactives sweep) and D4/F2 (per-alert control) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
@@ -337,6 +337,8 @@ flowchart LR
 
 - **D-066 — The Week page re-derives nothing, and blind spots render above the findings.** ✅ *(2026-09-04)*. `actionable`, `verb`, `status` and `blind_spots` are all computed in Python, where they are tested, and travel into `check.json` verbatim. A second implementation in JavaScript of "can I still fix this?" would compare a deadline to `now` on every reload and answer a slightly different question each time. The ordering rule is severity before deadline — an empty slot on Sunday outranks a bye you have a week to solve, because severity is about how *certain* the zero is. And `blindSpotsHtml` renders **above** the queue: an empty findings list with the caveat below the fold is exactly the false reassurance D-054 exists to prevent. The page also fails loudly — a payload it cannot load shows `unverified`, never a clean week. *Affects: F1, F3.*
 
+- **D-067 — Team names come from ESPN's current `name` field, and a fallback says so.** ✅ *(2026-09-04)*. The parser read `nickname` then `location` — the **pre-2023** shape — then fell back to `f"Team {id}"`. ESPN returns a single `name`, so on the live league *every* team rendered as its own placeholder: "Just End The Season" showed as "Team 11" for a week. The hand-built fixture encoded the old shape as well, so the tests and the code agreed with each other and both disagreed with ESPN — the **second** time that has happened, and the reason `CLAUDE.md` now says to check a new field against a live response rather than against the fixture. Fourth instance of the plausible-default pattern (D-047). Both fallbacks now emit a diagnostic, because **"Team 5" is a perfectly valid ESPN name** and without a note there is no way to tell a real one from a manufactured one. `abbrev` is carried through and never derived from the name, since an invented abbreviation looks exactly like a real one. *Affects: B1, B2, F1.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -357,7 +359,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 577 Python + 84 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
+| Unit/integration | 583 Python + 87 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

@@ -143,8 +143,8 @@ A failed source serves stale cache and marks the payload stale. Unmatched player
 reported, never omitted. When identity is still ambiguous, `resolve()` returns
 `unresolved` rather than picking one. This is a deliberate, load-bearing property.
 
-**The recurring way it gets violated is a plausible default**, not an omission. Three
-found so far, all of which produced a clean-looking run and an unguarded lineup:
+**The recurring way it gets violated is a plausible default**, not an omission. Four
+found so far, each producing a clean-looking run:
 
 - An unknown ESPN `lineupSlotId` defaulted to `"BN"`, so a starter whose slot id ESPN
   renamed was skipped by every check.
@@ -153,6 +153,11 @@ found so far, all of which produced a clean-looking run and an unguarded lineup:
 - A schedule row with a blank kickoff time was dropped, after which "this team has no game
   row" meant **bye** — a data-quality gap emitted as the single most certain fact the
   product makes, at interrupt priority.
+- Team names read ESPN's **pre-2023** `nickname`/`location` pair and fell back to
+  `f"Team {id}"`. ESPN returns a single `name`, so on a live league *every* team rendered
+  as its own placeholder — "Just End The Season" showed as "Team 11" for a week. The
+  fixture encoded the old shape too, so the tests and the code agreed with each other and
+  both disagreed with ESPN.
 
 The rule that came out of it: **an unusable value becomes `UNKNOWN` plus a diagnostic, and
 a diagnostic must reach somewhere a human looks** — `League.diagnostics` travels into the
@@ -508,6 +513,11 @@ machine. Chdir-per-test rather than per-call-site fixes, because the defaults ar
 point of those options and the next test written will forget again. Sources are tested against committed
 fixtures with a mocked `httpx.MockTransport`, so the suite is deterministic and offline.
 See the `client_returning()` helper duplicated across source tests.
+
+**When a fixture and the code agree, they can be wrong together.** Twice now the
+hand-built ESPN fixture encoded the same wrong assumption as the parser, so a green suite
+proved only that they matched each other. Check a *new* field against a live response, not
+against the fixture.
 
 `tests/fixtures/espn_league.json` is **hand-built**, but as of 2026-09-03 the parser it
 exercises is no longer unverified: `ffcoach league` ran against the real league and

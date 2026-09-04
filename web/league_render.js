@@ -53,9 +53,14 @@ export function teamCardHtml(team) {
   const name = escapeHtml(team.name);
   const owner = escapeHtml(team.owner);
   const badge = team.is_user_team ? ' <span class="mine-badge">Your team</span>' : "";
+  // ESPN's own short form. Never derived from the name: an invented
+  // abbreviation looks exactly like a real one.
+  const abbrev = team.abbrev
+    ? ` <span class="abbrev" title="Team abbreviation">${escapeHtml(team.abbrev)}</span>`
+    : "";
   return `<section class="team-card${team.is_user_team ? " mine" : ""}" data-team-id="${escapeHtml(team.team_id)}">
   <header>
-    <h2>${name}${badge}</h2>
+    <h2>${name}${abbrev}${badge}</h2>
     <p class="owner">${owner} &middot; ${escapeHtml(team.record)}</p>
     <p class="points">${team.points_for.toFixed(1)} PF / ${team.points_against.toFixed(1)} PA</p>
   </header>

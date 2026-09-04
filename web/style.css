@@ -190,3 +190,11 @@ td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: to
   .deadlines dl { grid-template-columns: 1fr; }
   .deadlines dd { margin-bottom: 0.4rem; }
 }
+
+/* ESPN's own team abbreviation. Quiet: it repeats the name, it does not
+   replace it (UX rule 1 -- terms are annotated, never renamed away). */
+.abbrev {
+  font-size: 0.7em; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 4px;
+  padding: 0 0.3em; vertical-align: middle;
+}

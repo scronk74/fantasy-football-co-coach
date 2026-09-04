@@ -61,6 +61,9 @@ class Team:
     points_against: float
     roster: tuple[RosterEntry, ...]
     is_user_team: bool = False
+    # ESPN's short form ("JETS"). Empty when absent -- never derived from the
+    # name, because an invented abbreviation looks exactly like a real one.
+    abbrev: str = ""
 
     @property
     def record(self) -> str:

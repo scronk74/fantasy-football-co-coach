@@ -80,6 +80,7 @@ def league_payload(
             {
                 "team_id": t.team_id,
                 "name": t.name,
+                "abbrev": t.abbrev,
                 "owner": t.owner,
                 "wins": t.wins,
                 "losses": t.losses,
@@ -138,6 +139,7 @@ def check_payload(
         "timezone": timezone,
         "league": league_name,
         "team": result.team_name,
+        "team_abbrev": result.team_abbrev,
         "week": result.week,
         "week_source": result.week_source,
         "status": result.status,

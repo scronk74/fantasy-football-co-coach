@@ -338,3 +338,56 @@ def test_an_absent_or_non_boolean_draft_state_is_unknown_not_false():
     assert parse_league(json.dumps(raw)).draft_completed is None
     raw["draftDetail"] = {"drafted": "yes"}
     assert parse_league(json.dumps(raw)).draft_completed is None
+
+
+# --- team names: ESPN's current field, and saying so when it is absent ---
+
+
+def test_the_current_espn_name_field_is_used(raw):
+    """It read `nickname`/`location` -- the pre-2023 shape -- so on a live
+    league every team fell through to "Team 5". Team 11 is called "Just End The
+    Season"; the product called it "Team 11" for a week.
+    """
+    league = parse_league(raw)
+    assert [t.name for t in league.teams] == ["Dynasty", "Disasters"]
+
+
+def test_the_short_abbreviation_is_carried_through():
+    raw = json.loads(FIXTURE.read_text())
+    assert parse_league(json.dumps(raw)).teams[0].abbrev == "DYN"
+
+
+def test_an_abbreviation_is_never_invented_from_the_name():
+    """A manufactured abbreviation looks exactly like a real one."""
+    raw = json.loads(FIXTURE.read_text())
+    raw["teams"][0].pop("abbrev", None)
+    assert parse_league(json.dumps(raw)).teams[0].abbrev == ""
+
+
+def test_the_legacy_shape_still_parses_but_says_that_it_did():
+    """Falling back silently is how this bug survived. A diagnostic makes the
+    drift visible on the page rather than only in a diff."""
+    raw = json.loads(FIXTURE.read_text())
+    team = raw["teams"][0]
+    team.pop("name")
+    team["location"], team["nickname"] = "Steve's", "Dynasty"
+    league = parse_league(json.dumps(raw))
+    assert league.teams[0].name == "Steve's Dynasty"
+    assert any("pre-2023" in note for note in league.diagnostics)
+
+
+def test_a_team_with_no_name_at_all_is_flagged_not_quietly_numbered():
+    """"Team 5" is a perfectly valid ESPN name. Without a diagnostic there is
+    no way to tell a real one from a manufactured one."""
+    raw = json.loads(FIXTURE.read_text())
+    raw["teams"][0].pop("name")
+    league = parse_league(json.dumps(raw))
+    assert league.teams[0].name == "Team 1"
+    assert any("no name field" in note for note in league.diagnostics)
+
+
+def test_a_blank_name_is_treated_as_absent():
+    raw = json.loads(FIXTURE.read_text())
+    raw["teams"][0]["name"] = "   "
+    league = parse_league(json.dumps(raw))
+    assert league.diagnostics

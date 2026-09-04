@@ -15,8 +15,11 @@ async function load() {
 
     document.title = `Week ${payload.week} — ${payload.league}`;
     $("title").textContent = `Week ${payload.week}`;
+    const team = payload.team_abbrev
+      ? `${payload.team} (${payload.team_abbrev})`
+      : payload.team;
     $("subtitle").textContent =
-      `${payload.team} · ${payload.league} · week from ${payload.week_source}`;
+      `${team} · ${payload.league} · week from ${payload.week_source}`;
     $("badge").innerHTML = statusBadge(payload.status);
     $("headline").textContent = headline(payload);
     $("body").innerHTML = weekHtml(payload);
