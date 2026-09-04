@@ -23,7 +23,7 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 583 Python + 87 JS, all green · CI gates both on every PR |
+| **Tests** | 591 Python + 87 JS, all green · CI gates both on every PR |
 | **Phase** | **C 7/7, D 3/5, E 3/6, F 1/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. The Week page is the front door. Next: the first real run after Monday's draft, then E6 (inactives sweep) and D4/F2 (per-alert control) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
@@ -339,6 +339,10 @@ flowchart LR
 
 - **D-067 — Team names come from ESPN's current `name` field, and a fallback says so.** ✅ *(2026-09-04)*. The parser read `nickname` then `location` — the **pre-2023** shape — then fell back to `f"Team {id}"`. ESPN returns a single `name`, so on the live league *every* team rendered as its own placeholder: "Just End The Season" showed as "Team 11" for a week. The hand-built fixture encoded the old shape as well, so the tests and the code agreed with each other and both disagreed with ESPN — the **second** time that has happened, and the reason `CLAUDE.md` now says to check a new field against a live response rather than against the fixture. Fourth instance of the plausible-default pattern (D-047). Both fallbacks now emit a diagnostic, because **"Team 5" is a perfectly valid ESPN name** and without a note there is no way to tell a real one from a manufactured one. `abbrev` is carried through and never derived from the name, since an invented abbreviation looks exactly like a real one. *Affects: B1, B2, F1.*
 
+- **D-068 — Opponents come from `mMatchup`, keyed by matchup period, never by week.** ✅ *(2026-09-04)*. `mMatchup` adds ~15 KB to a ~28 KB response — measured, because the scheduler fetches it every 30 minutes all season — and is what names this week's opponent. The lookup key is `status.currentMatchupPeriod`, **not** `scoringPeriodId`: they agree all regular season and diverge in the playoffs, where one matchup period spans several scoring weeks, so a week-keyed lookup would be right when it did not matter and wrong when it did. There is deliberately no fallback between them; a missing matchup period means the page says "opponent unknown". A side ESPN omits is a bye in an odd-sized league and is kept as an empty id, so "no opponent this week" stays distinct from "we could not read the matchups". Closes the matchup half of D-027. *Affects: F1, B1.*
+- **D-069 — The cache key encodes the request, not just the resource.** ✅ *(2026-09-04)*. Adding `mMatchup` to `VIEWS` changed the request and not the key, so the cache kept serving a body that simply did not contain the new field — and the fetch looked like it had succeeded. Found by watching the opponent stay unknown right after a successful live fetch. `_cache_key` now includes the sorted view list. Same shape as D-044's freshness bug: a cache that cannot tell two questions apart answers the wrong one confidently. *Affects: B1, and any future view or parameter change.*
+- **D-070 — Team logos are not shown at all.** ✅ *(2026-09-04)*. Built, tried against the live league, removed the same hour. ESPN's *default* logos are public SVGs on its CDN, but a **user-uploaded** logo lives on `mystique-api.fantasy.espn.com` and returns **401** to a plain `<img>` — the browser will not send ESPN's cookies on a cross-site subresource. So the teams who bothered to customise are exactly the ones whose image cannot load, which the user spotted within a minute: his own team and one other were empty boxes. An initials-underneath fallback worked, but ten logos plus two sets of initials reads as a bug rather than a design, and the initials duplicated the `abbrev` chip sitting beside them. **`abbrev` carries the same identity in text and does it for every team**, so the whole `logo` field is gone from the model, the payload and the fixture rather than kept as data nothing renders. Recorded in `CLAUDE.md` so it is not attempted a third time. *Affects: B2.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -359,7 +363,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 583 Python + 87 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
+| Unit/integration | 591 Python + 87 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

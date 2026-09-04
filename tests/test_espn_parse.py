@@ -391,3 +391,63 @@ def test_a_blank_name_is_treated_as_absent():
     raw["teams"][0]["name"] = "   "
     league = parse_league(json.dumps(raw))
     assert league.diagnostics
+
+
+# --- matchups: who you are playing, on the right clock ---
+
+
+def test_the_matchup_schedule_is_parsed(raw):
+    league = parse_league(raw)
+    assert len(league.matchups) == 2
+    assert league.current_matchup_period == 5
+
+
+def test_the_opponent_is_found_for_the_current_matchup_period(raw):
+    league = parse_league(raw, my_swid=MY_SWID)
+    mine = next(t for t in league.teams if t.is_user_team)
+    assert league.opponent_of(mine.team_id).name == "Disasters"
+
+
+def test_the_matchup_period_is_never_derived_from_the_scoring_period():
+    """They agree all regular season and diverge in the playoffs, where one
+    matchup period covers several scoring weeks. A fallback would be right
+    when it did not matter and wrong when it did."""
+    raw = json.loads(FIXTURE.read_text())
+    raw["status"].pop("currentMatchupPeriod")
+    league = parse_league(json.dumps(raw), my_swid=MY_SWID)
+    assert league.current_matchup_period is None
+    mine = next(t for t in league.teams if t.is_user_team)
+    assert league.opponent_of(mine.team_id) is None
+
+
+def test_a_side_espn_omits_is_a_bye_rather_than_a_dropped_row():
+    """In an odd-sized league ESPN omits one side. Keeping it as an empty id
+    keeps "no opponent this week" distinct from "we could not read the
+    matchups at all"."""
+    raw = json.loads(FIXTURE.read_text())
+    raw["schedule"] = [{"id": 1, "matchupPeriodId": 5, "home": {"teamId": 1}}]
+    league = parse_league(json.dumps(raw), my_swid=MY_SWID)
+    assert len(league.matchups) == 1
+    assert league.matchups[0].away_team_id == ""
+    mine = next(t for t in league.teams if t.is_user_team)
+    assert league.opponent_of(mine.team_id) is None
+
+
+def test_unreadable_matchup_rows_are_counted_in_the_diagnostics():
+    raw = json.loads(FIXTURE.read_text())
+    raw["schedule"] = [{"id": 1}, {"matchupPeriodId": "five"}, "garbage"]
+    league = parse_league(json.dumps(raw))
+    assert league.matchups == ()
+    assert any("matchup rows" in n for n in league.diagnostics)
+
+
+def test_an_absent_schedule_is_not_an_error(raw_no_schedule=None):
+    """Older captures, and the mSettings-only path, carry no schedule."""
+    raw = json.loads(FIXTURE.read_text())
+    raw.pop("schedule")
+    league = parse_league(json.dumps(raw))
+    assert league.matchups == ()
+    assert not any("matchup" in n for n in league.diagnostics)
+
+
+

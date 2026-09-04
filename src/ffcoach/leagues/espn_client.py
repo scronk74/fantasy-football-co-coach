@@ -20,7 +20,10 @@ ESPN_URL = (
     "/segments/0/leagues/{league_id}"
 )
 TTL_SECONDS = 15 * 60
-VIEWS = ("mTeam", "mRoster", "mSettings")
+# mMatchup adds ~15 KB to a ~28 KB response and is what names this week's
+# opponent. Measured rather than assumed, because the scheduler fetches this
+# every 30 minutes all season.
+VIEWS = ("mTeam", "mRoster", "mSettings", "mMatchup")
 
 
 class EspnUnavailable(Exception):
@@ -35,8 +38,19 @@ class EspnAuthError(EspnUnavailable):
     """
 
 
-def _cache_key(league_id: str, season: int) -> str:
-    return f"espn:league:{league_id}:{season}"
+def _cache_key(league_id: str, season: int, views: tuple[str, ...] = VIEWS) -> str:
+    """Cache key, **including which views were asked for**.
+
+    Without the views in the key, adding one to `VIEWS` silently kept serving
+    the old body: the request changed, the key did not, and the cache answered
+    with a response that simply did not contain the new field. Found by adding
+    `mMatchup` and watching the opponent stay unknown for a fetch that had, as
+    far as anything could tell, just succeeded.
+
+    The same shape as the freshness bug in `SourceResult`: a cache that cannot
+    tell two different questions apart answers the wrong one confidently.
+    """
+    return f"espn:league:{league_id}:{season}:{'+'.join(sorted(views))}"
 
 
 def fetch_league(

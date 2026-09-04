@@ -73,6 +73,33 @@ class Team:
 
 
 @dataclass(frozen=True)
+class Matchup:
+    """One head-to-head pairing, keyed by **matchup** period.
+
+    Not the scoring period. They coincide all regular season and diverge in the
+    playoffs, where one matchup period spans two or three scoring weeks -- so a
+    lookup by week number would name the wrong opponent exactly when the stakes
+    are highest. `League.current_matchup_period` is the key for this; `week` is
+    the key for everything about lineups.
+
+    Either side may be empty: in an odd-sized league ESPN omits one, which is a
+    bye. Represented rather than dropped, so "no opponent" and "we could not
+    read the matchups" stay distinguishable.
+    """
+
+    period: int
+    home_team_id: str = ""
+    away_team_id: str = ""
+
+    def opponent_of(self, team_id: str) -> str | None:
+        if team_id == self.home_team_id:
+            return self.away_team_id or None
+        if team_id == self.away_team_id:
+            return self.home_team_id or None
+        return None
+
+
+@dataclass(frozen=True)
 class WaiverSettings:
     """When claims process, and whether the league bids money for them.
 
@@ -171,6 +198,10 @@ class League:
     # nine "claim someone by Friday" findings for a roster the draft will fill
     # on Monday is the exact wolf-crying that makes an alert channel worthless.
     draft_completed: bool | None = None
+    matchups: tuple[Matchup, ...] = ()
+    # ESPN's `status.currentMatchupPeriod`. Kept apart from `current_week`
+    # deliberately -- see `Matchup`.
+    current_matchup_period: int | None = None
     # Things the adapter could not interpret: an unrecognized lineup slot id, a
     # pro team we have no abbreviation for, a waiver hour outside 0-23. Carried
     # on the model rather than logged at the parse site so they survive into the
@@ -180,6 +211,26 @@ class League:
     @property
     def starting_slots(self) -> dict[str, int]:
         return {s: n for s, n in self.roster_slots.items() if s not in BENCH_SLOTS}
+
+    def opponent_of(self, team_id: str) -> "Team | None":
+        """This matchup period's opponent, or `None` when there is not one.
+
+        `None` covers three genuinely different situations -- no matchup
+        period, no pairing (a bye), and an opponent id we have no team for --
+        and the caller says "opponent unknown" rather than inventing a name.
+        Guessing with `current_week` instead would be right all regular season
+        and wrong in the playoffs.
+        """
+        if self.current_matchup_period is None:
+            return None
+        for matchup in self.matchups:
+            if matchup.period != self.current_matchup_period:
+                continue
+            other = matchup.opponent_of(team_id)
+            if other is None:
+                continue
+            return next((t for t in self.teams if t.team_id == other), None)
+        return None
 
 
 @runtime_checkable

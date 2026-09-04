@@ -140,6 +140,8 @@ def check_payload(
         "league": league_name,
         "team": result.team_name,
         "team_abbrev": result.team_abbrev,
+        "opponent": result.opponent_name,
+        "opponent_abbrev": result.opponent_abbrev,
         "week": result.week,
         "week_source": result.week_source,
         "status": result.status,

@@ -103,6 +103,11 @@ Two properties of that template are load-bearing and were both absent until 2026
   "data 6d old", four days before a draft. A false alarm is how a reader learns to ignore
   the banner. Past its TTL a lookup still flips `stale`, because a wrong bind shows up on
   the page as the wrong player's bye week.
+- **The cache key encodes the request, not just the resource.** `espn_client._cache_key`
+  includes the sorted view list, because adding `mMatchup` to `VIEWS` otherwise kept
+  serving the body from before it: the request changed, the key did not, and the cache
+  answered a different question confidently. Same shape as the freshness bug this whole
+  section is about.
 - **`fetch_*` parses before it caches.** A 200 is not proof of a usable body: an ESPN
   session-expiry page, a captive portal, and a truncated CSV all arrive with a good status
   code. Caching the raw body first destroyed the last known-good copy at exactly the moment
@@ -416,6 +421,15 @@ No framework, no build step, no npm packages shipped. The split is enforced:
 
 **If it computes, it lives in `render.js` / `league_render.js` and has a test. If it touches
 the DOM, it lives in `main.js` / `league_main.js` and stays trivial enough to read.**
+
+**Team logos are deliberately not shown, and this is why** — so nobody adds them again.
+A league's *default* logo is a public SVG on `g.espncdn.com`, but a **user-uploaded** one
+lives on `mystique-api.fantasy.espn.com` and returns **401** to a plain `<img>`: the
+browser will not send ESPN's cookies on a cross-site subresource. So the teams who
+bothered to customise are exactly the ones whose image cannot load — built, tried on the
+live league, and the two custom uploads were empty boxes. Showing logos for ten teams and
+initials for two looked like a bug rather than a design. `abbrev` carries the same
+identity in text, and does it for every team.
 
 `web/nav.js` holds one `PAGES` list driving the nav on every page — adding a section is one
 entry, not per-page markup edits. A test fails if page names get hardcoded back into

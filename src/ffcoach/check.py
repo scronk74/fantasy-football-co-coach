@@ -85,6 +85,11 @@ class CheckResult:
     week_source: str
     team_name: str
     team_abbrev: str = ""
+    # This matchup period's opponent. Empty means genuinely unknown -- no
+    # matchup period, a bye, or an id we have no team for -- and the page says
+    # so rather than inventing a name.
+    opponent_name: str = ""
+    opponent_abbrev: str = ""
     findings: list[LineupFinding] = field(default_factory=list)
     actionable: list[LineupFinding] = field(default_factory=list)
     sources: tuple[SourceHealth, ...] = ()
@@ -201,6 +206,7 @@ def build_check(
     account of what is missing beats no answer.
     """
     team = _my_team(league)
+    opponent = league.opponent_of(team.team_id)
     waiver_deadline = next_waiver_deadline(league.waivers, now, tz)
 
     # `is False` and not `not`: an absent field is None, and an unknown draft
@@ -223,6 +229,8 @@ def build_check(
         week_source=week.source,
         team_name=team.name,
         team_abbrev=team.abbrev,
+        opponent_name=opponent.name if opponent else "",
+        opponent_abbrev=opponent.abbrev if opponent else "",
         findings=findings,
         actionable=actionable(findings, now),
         sources=tuple(sources),
