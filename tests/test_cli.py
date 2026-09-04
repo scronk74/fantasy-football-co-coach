@@ -555,3 +555,136 @@ def test_the_alert_history_is_stamped_with_the_checks_clock_not_the_wall_clock(
     assert stamps
     assert all(s.year == 2025 and s.month == 10 for s in stamps), stamps
     assert all(s < dt.datetime.now(dt.UTC) for s in stamps)
+
+
+# --- E1: every run leaves a line ---
+
+
+def read_log(path):
+    return [json.loads(line) for line in path.read_text().strip().splitlines()]
+
+
+def test_a_check_writes_one_run_log_line(checkable, tmp_path):
+    log = tmp_path / "runs.jsonl"
+    run_check(checkable, "--log", str(log))
+    records = read_log(log)
+    assert len(records) == 1
+    r = records[0]
+    assert r["command"] == "check"
+    assert r["ok"] is True
+    assert r["exit_code"] == 2
+    assert r["week"] == 5
+    assert r["week_source"] == "espn"
+    assert r["status"] == "problems"
+    assert r["findings"] == 6
+    assert r["actionable"] == 6
+    assert isinstance(r["duration_ms"], int)
+
+
+def test_the_log_records_per_source_freshness(checkable, tmp_path):
+    """F3's health panel reads this, and so does a person at 9am on a Sunday."""
+    log = tmp_path / "runs.jsonl"
+    run_check(checkable, "--log", str(log))
+    names = {s["name"] for s in read_log(log)[0]["sources"]}
+    assert "NFL schedule" in names
+
+
+def test_a_failed_run_is_logged_as_not_ok(checkable, tmp_path):
+    """A run that could not complete is not a heartbeat."""
+    log = tmp_path / "runs.jsonl"
+    main([
+        "check",
+        "--fixture", str(FIXTURES / "espn_league.json"),
+        "--cache", str(checkable),
+        "--season", "2025",
+        "--now", "2025-10-01T09:00-04:00",   # no --my-swid: no team is yours
+        "--log", str(log),
+    ])
+    r = read_log(log)[0]
+    assert r["ok"] is False
+    assert r["exit_code"] == 1
+
+
+def test_a_crash_still_leaves_a_line(checkable, tmp_path):
+    """The runs most worth diagnosing are the ones that blew up.
+
+    A check that raised and left no trace is exactly the silence E3 has to be
+    able to tell apart from a clean week.
+    """
+    import ffcoach.cli as cli
+
+    log = tmp_path / "runs.jsonl"
+    original = cli.build_check
+    cli.build_check = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+    try:
+        with pytest.raises(RuntimeError):
+            run_check(checkable, "--log", str(log))
+    finally:
+        cli.build_check = original
+
+    r = read_log(log)[0]
+    assert r["ok"] is False
+    assert "RuntimeError: boom" in r["error"]
+
+
+def test_delivery_outcomes_reach_the_log(checkable, tmp_path):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    log = tmp_path / "runs.jsonl"
+
+    import ffcoach.cli as cli
+
+    class Stub:
+        name = "stub"
+
+        def send(self, notification):
+            pass
+
+    original = cli._notifier
+    cli._notifier = lambda args: Stub()
+    try:
+        run_check(checkable, "--notify", "--notify-config", str(conf), "--log", str(log))
+    finally:
+        cli._notifier = original
+
+    r = read_log(log)[0]
+    assert r["sent"] == 6
+    assert r["channel"] == "stub"
+
+
+def test_a_dry_run_is_marked_as_such_in_the_log(checkable, tmp_path):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    log = tmp_path / "runs.jsonl"
+    run_check(checkable, "--notify", "--dry-run", "--notify-config", str(conf),
+              "--log", str(log))
+    r = read_log(log)[0]
+    assert r["dry_run"] is True
+    assert "sent" not in r
+
+
+def test_the_ntfy_topic_never_reaches_the_log(checkable, tmp_path):
+    """The topic is the credential, and the log is what gets pasted into issues."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    log = tmp_path / "runs.jsonl"
+
+    import ffcoach.cli as cli
+    from ffcoach.notify.base import DeliveryError
+
+    class Leaky:
+        name = "leaky"
+
+        def send(self, notification):
+            raise DeliveryError("POST to a-long-unguessable-topic-name failed")
+
+    original = cli._notifier
+    cli._notifier = lambda args: Leaky()
+    try:
+        run_check(checkable, "--notify", "--notify-config", str(conf), "--log", str(log))
+    finally:
+        cli._notifier = original
+
+    text = log.read_text()
+    assert "a-long-unguessable-topic-name" not in text
+    assert "***" in text

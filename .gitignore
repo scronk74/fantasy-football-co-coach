@@ -220,6 +220,7 @@ __marimo__/
 # ffcoach
 web/data/
 *.sqlite3
+*.jsonl
 .venv/
 
 # personal, not template — edit your own after copying league.example.yaml

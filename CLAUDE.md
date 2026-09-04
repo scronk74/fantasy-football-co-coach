@@ -45,7 +45,7 @@ uv run ffcoach build             # fetch data -> web/data/board.json
 uv run ffcoach league            # ESPN league/rosters -> web/data/league.json
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # no ESPN access needed
 uv run ffcoach refresh           # populate the cache only
-uv run ffcoach doctor            # print config and cache state
+uv run ffcoach doctor            # config, cache, alert channel, last run
 ```
 
 View pages through VS Code Live Server, not by opening the file. `file://` blocks the
@@ -225,6 +225,35 @@ One trap already paid for: ntfy is published as **JSON to the server root**, not
 tool generates contains an em dash, so the header form raises `UnicodeEncodeError`
 before anything is sent. A test caught it; the first alert of the season would have
 otherwise.
+
+### Every run leaves a line
+
+`runlog.py` appends one JSON object per `ffcoach check` (D-041: JSONL, because the
+first reader is a person with `grep` at 9am on a Sunday and the second is a UI history
+view). Nothing recorded anything before this, which made a quiet Sunday morning
+indistinguishable between "your lineup is clean" and "the cookies expired at 6am and
+every run since has errored" — the product's main failure mode once a scheduler runs it
+unattended, and the reason **E3 could not be built**: a dead-man's switch is the question
+*when did a run last succeed?*, and that had no answer.
+
+Three properties are load-bearing:
+
+- **The logging wraps the run in a `finally`**, not appended at the end. The runs worth
+  diagnosing are the ones that crash; a check that raised and left no trace is exactly
+  the silence E3 must be able to tell apart from a clean week. `_run_check` is a thin
+  wrapper; `_check_body` holds the logic.
+- **Secrets never reach it.** The ntfy topic is a credential and the ESPN cookies
+  authenticate as the user, and a log is what gets pasted into an issue. `RunLog` scrubs
+  its `secrets` from every string at any depth; empty and `None` are dropped, since
+  scrubbing `""` would replace every gap between characters.
+- **A logging failure never takes down the check.** A full disk must not cost you the
+  alert: write errors warn on stderr and the run continues.
+
+`doctor` prints the last run **and**, when it failed, the last one that succeeded. Both
+deliberately: a recent *run* proves the scheduler is alive, a recent *success* proves it
+would have told you something. Reporting only the first is how a machine erroring every
+fifteen minutes since Thursday reads as healthy. A corrupt half-written line is skipped
+rather than allowed to blind every reader.
 
 ### Repeats: two strikes, and the second one is spent late
 

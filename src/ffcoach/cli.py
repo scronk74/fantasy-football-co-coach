@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import sys
+import time
 from pathlib import Path
 
 from ffcoach.advisors.draft import build_board
@@ -31,6 +32,7 @@ from ffcoach.notify.message import notification_for
 from ffcoach.notify.policy import QuietHours, decide
 from ffcoach.notify.ntfy import ConsoleNotifier, NtfyNotifier
 from ffcoach.report.build import board_payload, league_payload, write_board
+from ffcoach.runlog import RunLog
 from ffcoach.report.check_text import render_check
 from ffcoach.sources.schedule import ScheduleUnavailable, fetch_schedule, parse_schedule
 from ffcoach.sources.crosswalk import CrosswalkUnavailable, fetch_crosswalk, parse_crosswalk
@@ -91,6 +93,12 @@ def _parser() -> argparse.ArgumentParser:
                 "--ignore-quiet-hours",
                 action="store_true",
                 help="send even between 23:00 and 08:00",
+            )
+            p.add_argument(
+                "--log",
+                default=Path(".ffcoach-runs.jsonl"),
+                type=Path,
+                help="append one JSON line per run here",
             )
         if name == "notify":
             p.add_argument(
@@ -317,7 +325,7 @@ def _run_notify(args) -> int:
     return EXIT_ALL_CLEAR
 
 
-def _deliver(args, result, now) -> int | None:
+def _deliver(args, result, now, outcome: dict) -> int | None:
     """Send what the repeat policy allows. Returns an exit code only on failure.
 
     The order here is load-bearing: **decide, send, then record**. Recording
@@ -342,6 +350,7 @@ def _deliver(args, result, now) -> int | None:
     # "you were not told" always has a visible reason attached to it.
     for reason in plan.held:
         print(f"  held: {reason}")
+    outcome["held"] = len(plan.held)
 
     note = notification_for(result, LEAGUE_TZ, plan.send) if plan.send else None
     if note is None:
@@ -359,19 +368,107 @@ def _deliver(args, result, now) -> int | None:
         # from a check that could not run (D-024), and nothing is recorded --
         # so the next run tries again rather than counting a phantom strike.
         print(f"error: {exc}", file=sys.stderr)
+        outcome["delivery_error"] = str(exc)
         return EXIT_ERROR
 
     # A dry run must not spend strikes: it delivered nothing.
     if notifier.name == "console":
+        outcome["dry_run"] = True
         return None
 
     history.record(plan.keys_sent)
+    outcome["sent"] = len(plan.send)
+    outcome["channel"] = notifier.name
     print(f"Sent via {notifier.name} ({len(plan.send)} of {len(result.actionable)}).")
     return None
 
 
+def _last_run_lines(run_log: RunLog) -> list[str]:
+    """What `doctor` says about the last run, and the last one that worked.
+
+    Both, deliberately. A recent *run* proves the scheduler is alive; a recent
+    *success* proves it would have told you something. Reporting only the first
+    is how a machine that has been erroring every fifteen minutes since
+    Thursday reads as healthy.
+    """
+    last = run_log.tail(1)
+    if not last:
+        return ["Last run: never — nothing has run `ffcoach check` yet"]
+    record = last[0]
+    bits = [f"exit {record.get('exit_code', '?')}"]
+    if record.get("status"):
+        bits.append(str(record["status"]))
+    if record.get("findings") is not None:
+        bits.append(f"{record['findings']} found")
+    if record.get("sent"):
+        bits.append(f"{record['sent']} sent")
+    if record.get("error"):
+        bits.append(str(record["error"]))
+    lines = [f"Last run: {record.get('at', '?')} — {', '.join(bits)}"]
+
+    if not record.get("ok"):
+        success = run_log.last_success()
+        lines.append(
+            f"Last OK:  {success['at']}" if success
+            else "Last OK:  never — no run has ever completed"
+        )
+    return lines
+
+
+def _run_log_for(args) -> RunLog:
+    """A log that scrubs whatever credentials this invocation has in play.
+
+    Loaded best-effort: a missing or malformed config must not stop the run
+    from being logged, and an absent secret is simply one fewer thing to
+    redact. Nothing here prints or stores the values themselves.
+    """
+    secrets: list[str] = []
+    for loader, path in (
+        (load_espn_credentials, getattr(args, "espn_config", None)),
+        (load_notify_config, getattr(args, "notify_config", None)),
+    ):
+        if path is None:
+            continue
+        try:
+            conf = loader(path)
+        except ConfigError:
+            continue
+        secrets.extend(
+            v for v in (
+                getattr(conf, "espn_s2", None),
+                getattr(conf, "swid", None),
+                getattr(conf, "topic", None),
+            ) if v
+        )
+    return RunLog(args.log, secrets=secrets)
+
+
 def _run_check(args, cache: Cache) -> int:
-    """Compose the whole safety decision and say what it concluded."""
+    """Compose the whole safety decision, say what it concluded, and log it.
+
+    The logging is wrapped around everything in a `finally` rather than added
+    at the end, because the runs worth diagnosing are the ones that crash. A
+    check that raised and left no trace is exactly the silence E3 has to be
+    able to tell apart from a clean week.
+    """
+    started = time.monotonic()
+    record: dict = {"command": "check", "ok": False}
+    run_log = _run_log_for(args)
+    try:
+        code = _check_body(args, cache, record)
+        record["ok"] = code != EXIT_ERROR
+        record["exit_code"] = code
+        return code
+    except Exception as exc:  # noqa: BLE001 -- re-raised below; logged first
+        record["error"] = f"{type(exc).__name__}: {exc}"
+        record["exit_code"] = EXIT_ERROR
+        raise
+    finally:
+        record["duration_ms"] = round((time.monotonic() - started) * 1000)
+        run_log.append(record)
+
+
+def _check_body(args, cache: Cache, record: dict) -> int:
     if args.now:
         try:
             now = dt.datetime.fromisoformat(args.now)
@@ -395,6 +492,8 @@ def _run_check(args, cache: Cache) -> int:
     week = _resolve_week(league, cache, args.season)
     if week is None:
         return EXIT_ERROR
+    record["week"] = week.week
+    record["week_source"] = week.source
 
     try:
         schedule_raw = fetch_schedule(args.season, cache)
@@ -422,11 +521,22 @@ def _run_check(args, cache: Cache) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
+    record.update(
+        status=result.status,
+        findings=len(result.findings),
+        actionable=len(result.actionable),
+        blind_spots=list(result.blind_spots),
+        sources=[
+            {"name": s.name, "age_seconds": round(s.age_seconds), "stale": s.stale}
+            for s in result.sources
+        ],
+    )
+
     for line in render_check(result, LEAGUE_TZ, league.name):
         print(line)
 
     if args.notify:
-        rc = _deliver(args, result, now)
+        rc = _deliver(args, result, now, record)
         if rc is not None:
             return rc
 
@@ -491,6 +601,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Alerts:   {notify_conf.channel} configured ({notify_conf.server})")
         except ConfigError as exc:
             print(f"Alerts:   not configured — {exc}")
+        # The diagnostic payoff of E1: "it has been quiet" and "it has been
+        # broken since Thursday" look identical without this.
+        for line in _last_run_lines(RunLog(Path(".ffcoach-runs.jsonl"))):
+            print(line)
         return 0
 
     try:

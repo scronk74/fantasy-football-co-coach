@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 474 Python + 53 JS, all green · CI gates both on every PR |
-| **Phase** | **Stage C 7/7, D 3/5.** Detection runs, delivers, and no longer repeats itself — the scheduler prerequisite is met. Next is E1 (logging) → E2 (launchd), and F1 (the Week page) |
+| **Tests** | 495 Python + 53 JS, all green · CI gates both on every PR |
+| **Phase** | **C 7/7, D 3/5, E 1/6.** Detection runs, delivers, does not repeat itself, and now leaves a trace. Next is E2 (launchd, once the iMac lands) and F1 (the Week page, once the draft fills a roster) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -120,7 +120,7 @@ flowchart LR
     end
     subgraph SE["E · Reliability"]
         direction TB
-        E1["E1 structured logging"]:::confirmed
+        E1["E1 structured logging<br/>DONE"]:::confirmed
         E2["E2 launchd install"]:::confirmed
         E3["E3 dead-man switch"]:::confirmed
         E4["E4 delivery failure"]:::confirmed
@@ -187,9 +187,9 @@ flowchart LR
 | D3 | Quiet hours + two-strike repeat policy | Done | 🟢 V1 | — | D1 | M | D-018, D-019, D-057, **D-060, D-061** | ✅ 2026-09-03 |
 | D4 | Per-alert enable / tier / threshold config | Backlog | 🟢 V1 | Week 1 | D1 | L | D-020 | ✅ 2026-08-29 |
 | D5 | Channel bake-off — `ffcoach notify --test` shipped with D1 | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
-| E1 | **Structured run logging** (JSONL + SQLite history) | **Next** | 🟢 V1 | **Wed 09-09** | D1 | M | D-021, D-041 | ✅ 2026-08-29 |
-| E2 | `launchd` install + per-window scheduling | Backlog | 🟢 V1 | Week 1 | D1 | **H** | D-022 | ✅ 2026-08-29 |
-| E3 | Dead-man's switch | Backlog | 🟢 V1 | Week 1 | E1, E2 | M | D-023 | ✅ 2026-08-29 |
+| E1 | **Structured run logging** (JSONL + SQLite history) | Done | 🟢 V1 | — | D1 | M | D-021, D-041, **D-062** | ✅ 2026-09-04 |
+| E2 | `launchd` install + per-window scheduling | **Next** | 🟢 V1 | **Sun 09-06** | D1, E1 | **H** | D-022 | ✅ 2026-08-29 |
+| E3 | Dead-man's switch — **unblocked by E1** | Backlog | 🟢 V1 | Week 1 | E1, E2 | M | D-023, R-3 | ✅ 2026-08-29 |
 | E4 | Delivery-failure detection + fallback | Backlog | 🟢 V1 | Week 1 | D1, E1 | M | D-024 | ✅ 2026-08-29 |
 | E5 | `ffcoach init` + hardened `doctor` | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
 | E6 | Inactives sweep (~90m pre-kickoff) | Backlog | 🟢 V1 | Week 1 | E2 | M | D-026 | ✅ 2026-08-29 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 0/6 · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 18/42 steps done (43%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 1/6 (17%) · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 19/42 steps done (45%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -327,6 +327,8 @@ flowchart LR
 - **D-060 — The second strike is spent late, and needs air after the first.** ✅ *(2026-09-03)*. D-019 said "two strikes" and left *when* open. Spending strike two on the next scheduler run is a reminder fifteen minutes after the first — pure noise. It waits for a three-hour last-call window before the deadline, which is the single most useful message this tool sends. A second constant was **found by a test, not by reasoning**: without a 45-minute minimum gap, a problem first *seen* inside the last-call window burns both strikes in one scheduler cycle and then goes silent for the three hours that mattered. Quiet hours get the mirror-image exception: they yield to a deadline that falls inside them, because holding past the last actionable moment produces silence indistinguishable from a clean week. *Affects: D3, E2, E6.*
 - **D-061 — Decide, send, then record; and the history clock is the check's clock.** ✅ *(2026-09-03)*. Three orderings that all fail the same way — by spending a strike on a message nobody received. Recording before sending loses strike two, the one that lands ninety minutes before kickoff; a failed delivery therefore records nothing and the next run retries. A `--dry-run` records nothing, because it delivered nothing. And `AlertHistory` takes the *check's* clock rather than `time.time()`: with `--now` they differ, so every "how long since the last alert" comparison would be between a simulated instant and a real one — wrong wherever the flag is used and invisible in production where the two agree. Found by running a six-run simulation, not by a unit test. Alert history also lives in its own `alerts` table rather than through `Cache`: a TTL store's contract is that entries expire, and an expired alert record hands a fixed problem a fresh pair of strikes.
 
+- **D-062 — The run log wraps the run, and never carries a secret or takes it down.** ✅ *(2026-09-04)*. Three choices inside E1, each of which had an obvious wrong version. **The logging is a `finally` around the whole run, not a line at the end** — the runs worth diagnosing are the ones that crash, and a check that raised and left no trace is precisely the silence E3 must distinguish from a clean week (`_run_check` became a thin wrapper over `_check_body`). **Secrets are scrubbed at any depth**, because the ntfy topic is a credential (D-058), the ESPN cookies authenticate as the user, and a log file is the thing people paste into issues; empty and `None` secrets are dropped, since scrubbing `""` would replace every gap between characters. **A write failure warns and continues** — a full disk must not cost you the alert. `doctor` reports the last run *and*, when it failed, the last success: a recent run proves the scheduler is alive, only a recent success proves it would have told you anything. **This closes E3's prerequisite** — "when did a run last succeed?" now has an answer.
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -346,7 +348,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 474 Python + 53 JS, all green; offline via committed fixtures |
+| Unit/integration | 495 Python + 53 JS, all green; offline via committed fixtures |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |
