@@ -26,7 +26,9 @@ from ffcoach.model.week import (
     resolve_week,
 )
 from ffcoach.notify.base import DeliveryError, Notification
+from ffcoach.notify.history import AlertHistory
 from ffcoach.notify.message import notification_for
+from ffcoach.notify.policy import QuietHours, decide
 from ffcoach.notify.ntfy import ConsoleNotifier, NtfyNotifier
 from ffcoach.report.build import board_payload, league_payload, write_board
 from ffcoach.report.check_text import render_check
@@ -84,6 +86,11 @@ def _parser() -> argparse.ArgumentParser:
                 "--dry-run",
                 action="store_true",
                 help="with --notify, print the message instead of sending it",
+            )
+            p.add_argument(
+                "--ignore-quiet-hours",
+                action="store_true",
+                help="send even between 23:00 and 08:00",
             )
         if name == "notify":
             p.add_argument(
@@ -310,6 +317,59 @@ def _run_notify(args) -> int:
     return EXIT_ALL_CLEAR
 
 
+def _deliver(args, result, now) -> int | None:
+    """Send what the repeat policy allows. Returns an exit code only on failure.
+
+    The order here is load-bearing: **decide, send, then record**. Recording
+    before a send would spend a strike on a message that never arrived, and the
+    second strike is the one that lands ninety minutes before kickoff.
+    """
+    notifier = _notifier(args)
+    if notifier is None:
+        return EXIT_ERROR
+
+    # The history clock must be the check's clock, not the wall clock. With
+    # `--now` they differ, and every "how long since the last alert" comparison
+    # is then between a simulated instant and a real one -- silently wrong
+    # everywhere the flag is used, and invisible in production where they agree.
+    history = AlertHistory(args.cache, now=now.timestamp)
+    quiet = QuietHours(enabled=not args.ignore_quiet_hours)
+    plan = decide(
+        result.actionable, result.week, history.records(), now, quiet, LEAGUE_TZ
+    )
+
+    # A suppressed alert is a decision, not an absence. Printed every time so
+    # "you were not told" always has a visible reason attached to it.
+    for reason in plan.held:
+        print(f"  held: {reason}")
+
+    note = notification_for(result, LEAGUE_TZ, plan.send) if plan.send else None
+    if note is None:
+        # D-016: zero interrupts in a clean week is the system working. Said out
+        # loud so "nothing sent" is never confused with a failure to send --
+        # which is exactly what the dead-man's switch exists for.
+        why = result.status if not plan.held else "everything held by policy"
+        print(f"Nothing to send ({why}); no message dispatched.")
+        return None
+
+    try:
+        notifier.send(note)
+    except DeliveryError as exc:
+        # A check that ran and could not be delivered is a different problem
+        # from a check that could not run (D-024), and nothing is recorded --
+        # so the next run tries again rather than counting a phantom strike.
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    # A dry run must not spend strikes: it delivered nothing.
+    if notifier.name == "console":
+        return None
+
+    history.record(plan.keys_sent)
+    print(f"Sent via {notifier.name} ({len(plan.send)} of {len(result.actionable)}).")
+    return None
+
+
 def _run_check(args, cache: Cache) -> int:
     """Compose the whole safety decision and say what it concluded."""
     if args.now:
@@ -366,26 +426,9 @@ def _run_check(args, cache: Cache) -> int:
         print(line)
 
     if args.notify:
-        notifier = _notifier(args)
-        if notifier is None:
-            return EXIT_ERROR
-        note = notification_for(result, LEAGUE_TZ)
-        if note is None:
-            # D-016: zero interrupts in a clean week is the system working.
-            # Said out loud so "nothing sent" is never confused with a failure
-            # to send -- which is exactly what the dead-man's switch exists for.
-            print(f"Nothing to send ({result.status}); no message dispatched.")
-        else:
-            try:
-                notifier.send(note)
-            except DeliveryError as exc:
-                # A check that ran and could not be delivered is a different
-                # problem from a check that could not run (D-024), and the exit
-                # code has to keep saying there is something to fix.
-                print(f"error: {exc}", file=sys.stderr)
-                return EXIT_ERROR
-            if notifier.name != "console":
-                print(f"Sent via {notifier.name}.")
+        rc = _deliver(args, result, now)
+        if rc is not None:
+            return rc
 
     if result.actionable:
         return EXIT_ACTIONABLE

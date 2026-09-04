@@ -58,9 +58,20 @@ def _line(finding, tz: dt.tzinfo) -> str:
     return line
 
 
-def notification_for(result: CheckResult, tz: dt.tzinfo) -> Notification | None:
-    """What to send, or `None` when nothing has earned an interruption."""
-    fixes = result.actionable
+def notification_for(
+    result: CheckResult,
+    tz: dt.tzinfo,
+    fixes: list | None = None,
+) -> Notification | None:
+    """What to send, or `None` when nothing has earned an interruption.
+
+    `fixes` overrides which findings go in the message, so the repeat policy
+    (`notify/policy.py`) can hand over the subset that is allowed to interrupt
+    right now. The count in the title then describes what is *being sent*, not
+    what exists -- a title saying "6 lineup fixes" above two lines would read
+    as truncation rather than as policy.
+    """
+    fixes = result.actionable if fixes is None else fixes
     if not fixes:
         return None
 

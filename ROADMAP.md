@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 436 Python + 53 JS, all green · CI gates both on every PR |
-| **Phase** | **Stage C 7/7, D 2/5.** Detection runs and delivers: `ffcoach check --notify` reaches a phone. Next is D3 (repeat policy — required before any scheduler) and F1 (the Week page) |
+| **Tests** | 474 Python + 53 JS, all green · CI gates both on every PR |
+| **Phase** | **Stage C 7/7, D 3/5.** Detection runs, delivers, and no longer repeats itself — the scheduler prerequisite is met. Next is E1 (logging) → E2 (launchd), and F1 (the Week page) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -114,7 +114,7 @@ flowchart LR
         direction TB
         D1["D1 Notifier + ntfy<br/>DONE"]:::confirmed
         D2["D2 message rendering"]:::confirmed
-        D3["D3 quiet hours + 2-strike"]:::confirmed
+        D3["D3 quiet hours + 2-strike<br/>DONE"]:::confirmed
         D4["D4 alert control config"]:::confirmed
         D5["D5 channel bake-off"]:::confirmed
     end
@@ -184,10 +184,10 @@ flowchart LR
 | C7 | **`CheckResult` + `ffcoach check`** | Done | 🟢 V1 | — | C6 | **H** | D-049, **D-054** | ✅ 2026-09-03 |
 | D1 | `Notifier` interface + **ntfy** | Done | 🟢 V1 | — | C7 | M | D-016, D-042, **D-057, D-058** | ✅ 2026-09-03 |
 | D2 | Message rendering (~~160-char SMS budget~~) | Done | 🟢 V1 | — | D1 | L | D-017, **D-059** | ✅ 2026-09-03 |
-| D3 | Quiet hours + two-strike repeat policy | **Next** | 🟢 V1 | **before E2** | D1 | M | D-018, D-019, **D-057** | ✅ 2026-09-03 |
+| D3 | Quiet hours + two-strike repeat policy | Done | 🟢 V1 | — | D1 | M | D-018, D-019, D-057, **D-060, D-061** | ✅ 2026-09-03 |
 | D4 | Per-alert enable / tier / threshold config | Backlog | 🟢 V1 | Week 1 | D1 | L | D-020 | ✅ 2026-08-29 |
 | D5 | Channel bake-off — `ffcoach notify --test` shipped with D1 | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
-| E1 | **Structured run logging** (JSONL + SQLite history) | Backlog | 🟢 V1 | Week 1 | D1 | M | D-021, D-041 | ✅ 2026-08-29 |
+| E1 | **Structured run logging** (JSONL + SQLite history) | **Next** | 🟢 V1 | **Wed 09-09** | D1 | M | D-021, D-041 | ✅ 2026-08-29 |
 | E2 | `launchd` install + per-window scheduling | Backlog | 🟢 V1 | Week 1 | D1 | **H** | D-022 | ✅ 2026-08-29 |
 | E3 | Dead-man's switch | Backlog | 🟢 V1 | Week 1 | E1, E2 | M | D-023 | ✅ 2026-08-29 |
 | E4 | Delivery-failure detection + fallback | Backlog | 🟢 V1 | Week 1 | D1, E1 | M | D-024 | ✅ 2026-08-29 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 2/5 (40%) · E 0/6 · F 0/5 · G 0/5 · H 0/6.
-**Overall:** 17/42 steps done (40%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 0/6 · F 0/5 · G 0/5 · H 0/6.
+**Overall:** 18/42 steps done (43%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -324,6 +324,9 @@ flowchart LR
 - **D-058 — The ntfy topic name is a credential.** ✅ *(2026-09-03)*. A public ntfy topic has no authentication of any kind: whoever knows the name can read your alerts and publish to them. So `notify.yaml` is gitignored like `espn.yaml`, obvious names (`ffcoach`, `fantasy`, `test`, `alerts`) are refused at load rather than merely discouraged, `doctor` reports that a channel is configured and never which topic, and `DeliveryError` messages omit it — an error string is the thing most likely to be pasted into an issue.
 - **D-059 — The 160-character budget is retired, and ntfy is published as JSON.** ✅ *(2026-09-03)*. D-017's budget existed for an SMS gateway that D-042 deferred; ntfy has no length ceiling, so messages name the replacement inline and the fix needs no second screen. Long lists truncate at five with an exact count and a pointer, so nothing is hidden. Separately: publishing as `{server}/{topic}` with a `Title:` header **does not work** — HTTP headers are ASCII and every generated title contains an em dash, so it raises `UnicodeEncodeError` before sending. JSON to the server root is UTF-8. Caught by a test rather than by the first alert of the season.
 
+- **D-060 — The second strike is spent late, and needs air after the first.** ✅ *(2026-09-03)*. D-019 said "two strikes" and left *when* open. Spending strike two on the next scheduler run is a reminder fifteen minutes after the first — pure noise. It waits for a three-hour last-call window before the deadline, which is the single most useful message this tool sends. A second constant was **found by a test, not by reasoning**: without a 45-minute minimum gap, a problem first *seen* inside the last-call window burns both strikes in one scheduler cycle and then goes silent for the three hours that mattered. Quiet hours get the mirror-image exception: they yield to a deadline that falls inside them, because holding past the last actionable moment produces silence indistinguishable from a clean week. *Affects: D3, E2, E6.*
+- **D-061 — Decide, send, then record; and the history clock is the check's clock.** ✅ *(2026-09-03)*. Three orderings that all fail the same way — by spending a strike on a message nobody received. Recording before sending loses strike two, the one that lands ninety minutes before kickoff; a failed delivery therefore records nothing and the next run retries. A `--dry-run` records nothing, because it delivered nothing. And `AlertHistory` takes the *check's* clock rather than `time.time()`: with `--now` they differ, so every "how long since the last alert" comparison would be between a simulated instant and a real one — wrong wherever the flag is used and invisible in production where the two agree. Found by running a six-run simulation, not by a unit test. Alert history also lives in its own `alerts` table rather than through `Cache`: a TTL store's contract is that entries expire, and an expired alert record hands a fixed problem a fresh pair of strikes.
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -337,13 +340,13 @@ flowchart LR
 - **R-1 — ~~No league invite yet.~~ CLOSED 2026-09-03.** League `1076479097`, `espn.yaml` created by the user, `ffcoach league` returns 12 teams with **zero diagnostics** — the hand-written fixture's field names matched live ESPN exactly. `lineupLocktimeType` is `INDIVIDUAL_GAME`, the branch already handled. Historical detail below.
 - **R-1 (historical) — No league invite yet.** *Gates:* verifying the ESPN parser against real data; `espn.yaml`; real league settings; anything running against a live league. **No longer gates C5** — C5 was unblocked by recognizing only the *default* lock value and treating any other as the alternative, so the unverified spelling was never needed. *What must change:* the user is invited and supplies league ID + `espn_s2`/`SWID` cookies. *Why it matters:* `leagues/espn.py` was built against a **hand-written fixture** derived from community docs — tests passing proves internal consistency, **not** that it matches ESPN. Expect field-name corrections. *Who decides:* league commissioner, then user. *Linked:* B1, Q-2.
 - **R-2 — `launchd` correctness is untestable in CI.** *Gates:* confidence in E2/E3. *What must change:* a real install-and-wait-a-day check on the actual iMac. *Why:* the failure mode is silence, which looks identical to success. *Who decides:* user (manual verification). *Linked:* E2, E3.
-- **R-3 — The scheduler and the dead-man's switch share one sleeping iMac.** *(Raised by the 2026-08-31 review.)* *Gates:* whether "never miss a move" is literally true or best-effort. *Why:* a process on that machine cannot warn you while the machine is asleep. Running a missed job on wake only helps if wake precedes the deadline. *What must change:* either an off-host heartbeat, or the promise is restated as best-effort in the product's own copy. *Who decides:* user. *Linked:* E2, E3, D-023.
+- **R-3 — The scheduler and the dead-man's switch share one sleeping iMac.** *(Update 2026-09-03: the user hopes to have a **dedicated always-on iMac** in place over the weekend of 09-05/06, which removes the sleep half of this. It is still a single host, so an off-host heartbeat remains the only thing that catches the machine itself dying — the roadblock narrows rather than closes.)* *(Raised by the 2026-08-31 review.)* *Gates:* whether "never miss a move" is literally true or best-effort. *Why:* a process on that machine cannot warn you while the machine is asleep. Running a missed job on wake only helps if wake precedes the deadline. *What must change:* either an off-host heartbeat, or the promise is restated as best-effort in the product's own copy. *Who decides:* user. *Linked:* E2, E3, D-023.
 
 ## 8. Validation & test-coverage status
 
 | Layer | State |
 |---|---|
-| Unit/integration | 436 Python + 53 JS, all green; offline via committed fixtures |
+| Unit/integration | 474 Python + 53 JS, all green; offline via committed fixtures |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |
