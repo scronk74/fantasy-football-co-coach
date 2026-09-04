@@ -23,8 +23,8 @@ split_threshold: 8
 |---|---|
 | **Date** | 2026-09-03 |
 | **Branch** | `docs-product-is-alerting` · PR: — (9 merged) |
-| **Tests** | 591 Python + 87 JS, all green · CI gates both on every PR |
-| **Phase** | **C 7/7, D 3/5, E 3/6, F 1/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. The Week page is the front door. Next: the first real run after Monday's draft, then E6 (inactives sweep) and D4/F2 (per-alert control) |
+| **Tests** | 606 Python + 87 JS, all green · CI gates both on every PR |
+| **Phase** | **C 7/7, D 3/5, E 3/6, F 2/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, and reports its own failure. The last piece that made it run without being asked is built; installing it waits on the iMac. The Week page is the front door. Next: the first real run after Monday's draft, then E6 (inactives sweep) and D4/F2 (per-alert control) |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -129,7 +129,7 @@ flowchart LR
     end
     subgraph SF["F · Dashboard"]
         direction TB
-        F0["F0 ffcoach serve"]:::confirmed
+        F0["F0 ffcoach serve<br/>DONE"]:::confirmed
         F1["F1 week page<br/>DONE · landing page"]:::confirmed
         F2["F2 notification control UI"]:::confirmed
         F3["F3 source refresh panel"]:::confirmed
@@ -193,7 +193,7 @@ flowchart LR
 | E4 | Delivery-failure detection + fallback | Backlog | 🟢 V1 | Week 1 | D1, E1 | M | D-024 | ✅ 2026-08-29 |
 | E5 | `ffcoach init` + hardened `doctor` — **`notify --init` shipped** | Backlog | 🟢 V1 | Week 1 | D4 | M | D-025 | ✅ 2026-08-29 |
 | E6 | Inactives sweep (~90m pre-kickoff) | Backlog | 🟢 V1 | Week 1 | E2 | M | D-026 | ✅ 2026-08-29 |
-| F0 | **`ffcoach serve` — local web server** | Backlog | 🟢 V1 | — | — | L | D-040 | ✅ 2026-08-29 |
+| F0 | **`ffcoach serve` — local web server** | Done | 🟢 V1 | — | — | L | D-040, **D-071** | ✅ 2026-09-04 |
 | F1 | Week dashboard — **is the landing page** | Done | 🟢 V1 | — | C4 | M | D-027, D-028, D-051, **D-066** | ✅ 2026-09-04 |
 | F2 | Notification control UI (writes config) | Backlog | 🟢 V1 | — | D4, F0 | M | D-020, D-040 | ✅ 2026-08-29 |
 | F3 | Data-source refresh / health panel | Backlog | 🟢 V1 | — | E1, F0 | L | D-029 | ✅ 2026-08-29 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 3/6 (50%) · F 1/5 (20%) · G 0/5 · H 0/6.
-**Overall:** 22/42 steps done (52%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 3/6 (50%) · F 2/5 (40%) · G 0/5 · H 0/6.
+**Overall:** 23/42 steps done (55%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -343,6 +343,8 @@ flowchart LR
 - **D-069 — The cache key encodes the request, not just the resource.** ✅ *(2026-09-04)*. Adding `mMatchup` to `VIEWS` changed the request and not the key, so the cache kept serving a body that simply did not contain the new field — and the fetch looked like it had succeeded. Found by watching the opponent stay unknown right after a successful live fetch. `_cache_key` now includes the sorted view list. Same shape as D-044's freshness bug: a cache that cannot tell two questions apart answers the wrong one confidently. *Affects: B1, and any future view or parameter change.*
 - **D-070 — Team logos are not shown at all.** ✅ *(2026-09-04)*. Built, tried against the live league, removed the same hour. ESPN's *default* logos are public SVGs on its CDN, but a **user-uploaded** logo lives on `mystique-api.fantasy.espn.com` and returns **401** to a plain `<img>` — the browser will not send ESPN's cookies on a cross-site subresource. So the teams who bothered to customise are exactly the ones whose image cannot load, which the user spotted within a minute: his own team and one other were empty boxes. An initials-underneath fallback worked, but ten logos plus two sets of initials reads as a bug rather than a design, and the initials duplicated the `abbrev` chip sitting beside them. **`abbrev` carries the same identity in text and does it for every team**, so the whole `logo` field is gone from the model, the payload and the fixture rather than kept as data nothing renders. Recorded in `CLAUDE.md` so it is not attempted a third time. *Affects: B2.*
 
+- **D-071 — The server is rooted at `web/`, and refuses rather than falling back.** ✅ *(2026-09-04)*. `espn.yaml` and `notify.yaml` live in the project root, one directory above the pages; a server rooted there would publish session cookies that authenticate as the user and an ntfy topic anyone can publish to. So `web_root()` resolves the directory and checks for `index.html` before a socket is opened, and raises when it cannot find one — the plausible fallback is precisely the directory holding the credentials. Five traversal shapes are tested against a real running server rather than asserted. `.json` is served `no-store` and HTML is not: `check.json` is rewritten every scheduler run, and a cached copy would show last hour's findings with this hour's confidence, which is D-044's lie arriving through the HTTP layer. `--lan` is opt-in and prints what it exposes in the output rather than only in `--help`. *Affects: F2, F3, and reading the pages from a machine that is not the scheduler.*
+
 ### Open — need a decision
 
 - **Q-2 — Does the league use custom scoring?** ✅ **CLOSED, no** *(2026-09-03)*. `mSettings` publishes the complete 46-item `scoringItems` table, and every value is ESPN standard: receptions 1.0 (full PPR), 0.04/passing yd, 4-pt passing TD, 0.1/rush+rec yd, 6-pt rush+rec TD, −2 interception. `isCustomizable` is true but nothing was customized. **G5 stays Hold**, now for a reason rather than for lack of information. *Affects: G5, G1.*
@@ -363,7 +365,7 @@ flowchart LR
 
 | Layer | State |
 |---|---|
-| Unit/integration | 591 Python + 87 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
+| Unit/integration | 606 Python + 87 JS, all green; offline via committed fixtures **and isolated from the developer's own config and logs** (see conftest.py) |
 | Coverage % | Unmeasured — no coverage tooling configured |
 | Live-data verification | Crosswalk ✅ (240/240), schedule ✅ (32/32 byes), **ESPN league parser ✅ — live league 2026-09-03, zero diagnostics** |
 | Build/packaging | `uv` + hatchling; console script `ffcoach`; CI green on every PR |

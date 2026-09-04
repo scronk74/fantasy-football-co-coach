@@ -1258,3 +1258,79 @@ def test_the_run_log_records_which_timezone_was_used(checkable, tmp_path):
     log = tmp_path / "runs.jsonl"
     run_check(checkable, "--config", str(conf), "--log", str(log))
     assert "America/Chicago" in read_log(log)[0]["timezone"]
+
+
+# --- F0: `ffcoach serve` ---
+
+
+def test_serve_refuses_a_directory_with_no_pages(tmp_path, capsys):
+    """The plausible fallback is the project root, which is where the
+    credentials live -- so there is no fallback."""
+    assert main(["serve"]) == 1
+    assert "no pages found" in capsys.readouterr().err
+
+
+def test_serve_binds_to_localhost_unless_lan_is_asked_for(tmp_path, capsys):
+    """The pages carry the user's roster. Broadcasting them is opt-in."""
+    import ffcoach.cli as cli
+    from ffcoach.serve import ALL_INTERFACES, LOCALHOST
+
+    # conftest chdirs every test into a scratch directory, and `web_root()`
+    # resolves from the working directory -- so the pages go there, not in
+    # tmp_path.
+    web = Path.cwd() / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<h1>x</h1>")
+
+    seen = []
+
+    class FakeServer:
+        server_address = ("127.0.0.1", 8765)
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    original = cli.build_server
+    cli.build_server = lambda root, host, port: seen.append(host) or FakeServer()
+    try:
+        main(["serve"])
+        main(["serve", "--lan"])
+    finally:
+        cli.build_server = original
+
+    assert seen == [LOCALHOST, ALL_INTERFACES]
+
+
+def test_lan_mode_says_plainly_what_it_exposes(tmp_path, capsys):
+    """Buried in --help is not said."""
+    import ffcoach.cli as cli
+
+    # conftest chdirs every test into a scratch directory, and `web_root()`
+    # resolves from the working directory -- so the pages go there, not in
+    # tmp_path.
+    web = Path.cwd() / "web"
+    web.mkdir()
+    (web / "index.html").write_text("<h1>x</h1>")
+
+    class FakeServer:
+        server_address = ("0.0.0.0", 8765)
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    original = cli.build_server
+    cli.build_server = lambda root, host, port: FakeServer()
+    try:
+        main(["serve", "--lan"])
+    finally:
+        cli.build_server = original
+
+    out = capsys.readouterr().out
+    assert "Anyone on this network can read" in out
+    assert "your roster" in out

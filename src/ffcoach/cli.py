@@ -49,6 +49,15 @@ from ffcoach.report.build import (
     write_board,
 )
 from ffcoach.runlog import RunLog
+from ffcoach.serve import (
+    ALL_INTERFACES,
+    DEFAULT_PORT,
+    LOCALHOST,
+    ServeError,
+    build_server,
+    lan_address,
+    web_root,
+)
 from ffcoach.watchdog import WatchdogConfig, assess
 from ffcoach.report.check_text import render_check
 from ffcoach.sources.schedule import ScheduleUnavailable, fetch_schedule, parse_schedule
@@ -76,6 +85,7 @@ def _parser() -> argparse.ArgumentParser:
         ("check", "report whether this week's lineup needs fixing"),
         ("notify", "check the notification channel itself"),
         ("schedule", "run the check automatically via launchd"),
+        ("serve", "serve the pages over HTTP"),
     ):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--config", default="league.yaml", type=Path)
@@ -144,6 +154,20 @@ def _parser() -> argparse.ArgumentParser:
                 "--test",
                 action="store_true",
                 help="send one test message, to prove the channel works before you rely on it",
+            )
+        if name == "serve":
+            p.add_argument("--port", type=int, default=DEFAULT_PORT)
+            p.add_argument(
+                "--lan",
+                action="store_true",
+                help=(
+                    "listen on every interface so other devices on your network "
+                    "can read the pages (they contain your roster)"
+                ),
+            )
+            p.add_argument(
+                "--open", dest="open_browser", action="store_true",
+                help="open a browser at the served page",
             )
         if name == "schedule":
             group = p.add_mutually_exclusive_group(required=True)
@@ -371,6 +395,42 @@ def _current_agent(args):
             "launchd has no PATH of its own and would fail silently."
         )
     return build_agent(Path.cwd(), Path(uv), args.interval)
+
+
+def _run_serve(args) -> int:
+    """Serve `web/` until interrupted."""
+    try:
+        root = web_root()
+        host = ALL_INTERFACES if args.lan else LOCALHOST
+        server = build_server(root, host, args.port)
+    except ServeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    print(f"Serving {root} — press Ctrl-C to stop.")
+    print(f"  http://{LOCALHOST}:{args.port}/")
+    if args.lan:
+        address = lan_address()
+        if address:
+            print(f"  http://{address}:{args.port}/   (other devices on your network)")
+        # Said plainly rather than buried in --help: the pages carry the user's
+        # roster and league. Not credentials -- those never leave the repo root,
+        # which is not served -- but not something to broadcast unknowingly.
+        print()
+        print("  Listening on every interface. Anyone on this network can read")
+        print("  your roster and league. Use plain `ffcoach serve` to keep it local.")
+    if args.open_browser:
+        import webbrowser
+
+        webbrowser.open(f"http://{LOCALHOST}:{args.port}/")
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        server.server_close()
+    return EXIT_ALL_CLEAR
 
 
 def _is_macos() -> bool:
@@ -918,6 +978,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "schedule":
         return _run_schedule(args)
+
+    if args.command == "serve":
+        return _run_serve(args)
 
     try:
         config = load_config(args.config)
