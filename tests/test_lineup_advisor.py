@@ -794,3 +794,257 @@ def test_actionable_without_a_clock_still_answers_the_old_weaker_question(schedu
     team = team_with(entry("Hurt Guy", "WR", "KC", slot="WR", injury="OUT"))
     found = find_problems(team, schedule, week, EARLY)
     assert actionable(found) == found
+
+
+# --- E6: the inactives sweep ---------------------------------------------
+#
+# The one check whose existence depends on the clock. Every test here is about
+# *when*, because that is the entire feature: the same roster produces nothing
+# on Wednesday and a finding ninety minutes before kickoff.
+
+
+def at_risk_roster(injury="QUESTIONABLE"):
+    # The backup plays the same game as the starter deliberately. A backup on
+    # another team may have kicked off already, and by then he is not a
+    # replacement -- which is its own test, below.
+    return team_with(
+        entry("Doubtful Starter", "WR", "KC", injury=injury),
+        entry("Backup WR", "WR", "KC", slot="BN"),
+    )
+
+
+def kickoff_for(schedule, week, team="KC"):
+    return schedule.kickoff(team, week)
+
+
+def only_at_risk(findings):
+    return [f for f in findings if f.kind == "at_risk"]
+
+
+def test_a_questionable_starter_is_not_a_finding_days_early(schedule, week):
+    """Most Questionable players play. Benching one on Wednesday loses points."""
+    findings = find_problems(at_risk_roster(), schedule, week, EARLY)
+    assert only_at_risk(findings) == []
+
+
+def test_a_questionable_starter_becomes_a_finding_inside_the_window(schedule, week):
+    kickoff = kickoff_for(schedule, week)
+    now = kickoff - dt.timedelta(minutes=80)
+    findings = only_at_risk(find_problems(at_risk_roster(), schedule, week, now))
+    assert len(findings) == 1
+    assert findings[0].player_name == "Doubtful Starter"
+
+
+def test_the_window_opens_at_ninety_minutes_and_not_before(schedule, week):
+    """The NFL publishes inactives 90 minutes out; earlier there is no answer."""
+    kickoff = kickoff_for(schedule, week)
+    outside = kickoff - dt.timedelta(minutes=91)
+    inside = kickoff - dt.timedelta(minutes=89)
+    assert only_at_risk(find_problems(at_risk_roster(), schedule, week, outside)) == []
+    assert only_at_risk(find_problems(at_risk_roster(), schedule, week, inside))
+
+
+def test_nothing_is_reported_once_the_slot_has_locked(schedule, week):
+    """A decision you can no longer make is not a decision."""
+    kickoff = kickoff_for(schedule, week)
+    at_lock = only_at_risk(find_problems(at_risk_roster(), schedule, week, kickoff))
+    after = only_at_risk(
+        find_problems(at_risk_roster(), schedule, week, kickoff + dt.timedelta(minutes=5))
+    )
+    assert at_lock == []
+    assert after == []
+
+
+def test_a_zero_window_turns_the_sweep_off(schedule, week):
+    kickoff = kickoff_for(schedule, week)
+    now = kickoff - dt.timedelta(minutes=30)
+    findings = find_problems(
+        at_risk_roster(), schedule, week, now, window=dt.timedelta(0)
+    )
+    assert only_at_risk(findings) == []
+
+
+def test_an_out_starter_is_reported_once_not_twice(schedule, week):
+    """`out` and `at_risk` must not both fire for the same man."""
+    kickoff = kickoff_for(schedule, week)
+    now = kickoff - dt.timedelta(minutes=30)
+    findings = find_problems(at_risk_roster(injury="OUT"), schedule, week, now)
+    kinds = [f.kind for f in findings if f.player_name == "Doubtful Starter"]
+    assert kinds == ["out"]
+
+
+def test_a_questionable_starter_on_bye_is_reported_as_a_bye(schedule, week):
+    """The bye is certain; the injury no longer decides anything."""
+    bye_team = bye_team_for(schedule, week)
+    team = team_with(entry("On Bye", "WR", bye_team, injury="QUESTIONABLE"))
+    # A bye slot locks at the week's *last* kickoff, so anchor on that.
+    last = schedule.lock_windows(week)[-1]
+    findings = find_problems(team, schedule, week, last - dt.timedelta(minutes=30))
+    kinds = [f.kind for f in findings if f.player_name == "On Bye"]
+    assert kinds == ["bye"]
+
+
+def test_a_questionable_bench_player_is_never_a_finding(schedule, week):
+    """He is not in the lineup, so his status costs nothing."""
+    kickoff = kickoff_for(schedule, week)
+    team = team_with(entry("Benched", "WR", "KC", slot="BN", injury="QUESTIONABLE"))
+    findings = find_problems(
+        team, schedule, week, kickoff - dt.timedelta(minutes=30)
+    )
+    assert only_at_risk(findings) == []
+
+
+def test_the_finding_names_the_status_and_points_at_the_inactives_report(schedule, week):
+    """UX rule 4, and honesty about what this tool can actually see.
+
+    Nothing here fetches an inactives list. The reason must say what ESPN
+    still reports and leave the ruling to the source that has it.
+    """
+    kickoff = kickoff_for(schedule, week)
+    finding = only_at_risk(
+        find_problems(at_risk_roster(), schedule, week, kickoff - dt.timedelta(minutes=30))
+    )[0]
+    assert "Questionable" in finding.reason
+    assert "Backup WR" in finding.reason
+
+
+def test_the_deadline_is_his_own_kickoff_and_the_fix_is_a_swap(schedule, week):
+    kickoff = kickoff_for(schedule, week)
+    finding = only_at_risk(
+        find_problems(at_risk_roster(), schedule, week, kickoff - dt.timedelta(minutes=30))
+    )[0]
+    assert finding.fix.kind is FixKind.BENCH_SWAP
+    assert finding.replacements == ("Backup WR",)
+    assert finding.deadline <= kickoff
+    assert finding.is_actionable(kickoff - dt.timedelta(minutes=30)) is True
+
+
+def test_it_is_still_reported_when_the_bench_cannot_cover_it(schedule, week):
+    """Deliberately not suppressed.
+
+    A waiver claim cannot process inside ninety minutes, but an ESPN free agent
+    can be added instantly, so there is a real action left. `plan_fix` already
+    says exactly that, which is why this needs no special case -- and silence
+    here would be indistinguishable from a healthy lineup.
+    """
+    kickoff = kickoff_for(schedule, week)
+    team = team_with(entry("Alone", "WR", "KC", injury="QUESTIONABLE"))
+    finding = only_at_risk(
+        find_problems(
+            team,
+            schedule,
+            week,
+            kickoff - dt.timedelta(minutes=30),
+            waiver_deadline=kickoff + dt.timedelta(days=1),
+        )
+    )[0]
+    assert finding.fix.kind is FixKind.ADD_BEFORE_LOCK
+    assert "claim cannot arrive in time" in finding.reason
+
+
+def test_an_out_starter_gets_the_last_bench_player_before_a_doubtful_one(schedule, week):
+    """The allocation tiebreak, end to end.
+
+    One healthy bench WR, two broken WR slots -- one certainly out, one merely
+    Questionable. The certain zero must get him.
+    """
+    kickoff = kickoff_for(schedule, week)
+    team = team_with(
+        entry("Ruled Out", "WR", "KC", slot="WR", injury="OUT"),
+        entry("Maybe Playing", "WR", "KC", slot="FLEX", injury="QUESTIONABLE"),
+        entry("Only Backup", "WR", "KC", slot="BN"),
+    )
+    findings = find_problems(
+        team, schedule, week, kickoff - dt.timedelta(minutes=30)
+    )
+    by_player = {f.player_name: f for f in findings}
+    assert by_player["Ruled Out"].replacements == ("Only Backup",)
+    assert by_player["Maybe Playing"].replacements == ()
+
+
+def test_at_risk_sorts_above_a_bye(schedule, week):
+    """Its slot freezes sooner, which is what the ordering is for."""
+    kickoff = kickoff_for(schedule, week)
+    bye_team = bye_team_for(schedule, week)
+    team = team_with(
+        entry("On Bye", "RB", bye_team, slot="RB"),
+        entry("Maybe Playing", "WR", "KC", slot="WR", injury="QUESTIONABLE"),
+    )
+    findings = find_problems(
+        team, schedule, week, kickoff - dt.timedelta(minutes=30)
+    )
+    assert [f.player_name for f in findings] == ["Maybe Playing", "On Bye"]
+
+
+def test_under_a_weekly_lock_the_window_tracks_the_lock_not_the_kickoff(schedule, week):
+    """A Sunday starter froze on Thursday; ninety minutes before his own game
+    is ninety minutes too late to tell anyone."""
+    weekly = LineupLock(mode=LockMode.WEEKLY)
+    first = schedule.lock_windows(week)[0]
+    kickoff = kickoff_for(schedule, week)
+    if kickoff <= first + dt.timedelta(hours=2):
+        pytest.skip("fixture has no team playing well after the week's first game")
+
+    at_his_kickoff = find_problems(
+        at_risk_roster(), schedule, week, kickoff - dt.timedelta(minutes=30), lock=weekly
+    )
+    at_the_lock = find_problems(
+        at_risk_roster(), schedule, week, first - dt.timedelta(minutes=30), lock=weekly
+    )
+    assert only_at_risk(at_his_kickoff) == []
+    assert only_at_risk(at_the_lock)
+
+
+def test_a_backup_whose_game_already_started_is_not_a_replacement(schedule, week):
+    """Found by a test, and only visible once a check ran mid-week.
+
+    The starter plays Monday night; the backup played Sunday afternoon. Naming
+    him is a move ESPN will refuse, and it turns a finding the user could still
+    act on -- add a free agent before kickoff -- into one that reads as already
+    too late.
+    """
+    kickoff = kickoff_for(schedule, week)
+    early = kickoff_for(schedule, week, "BUF")
+    assert early < kickoff, "fixture no longer has BUF playing before KC"
+
+    team = team_with(
+        entry("Doubtful Starter", "WR", "KC", injury="QUESTIONABLE"),
+        entry("Already Played", "WR", "BUF", slot="BN"),
+    )
+    finding = only_at_risk(
+        find_problems(
+            team,
+            schedule,
+            week,
+            kickoff - dt.timedelta(minutes=30),
+            waiver_deadline=kickoff + dt.timedelta(days=1),
+        )
+    )[0]
+    assert finding.replacements == ()
+    assert finding.fix.kind is FixKind.ADD_BEFORE_LOCK
+    assert finding.is_actionable(kickoff - dt.timedelta(minutes=30)) is True
+
+
+def test_the_same_backup_counts_before_his_own_game(schedule, week):
+    """The filter is the clock, not the team."""
+    early = kickoff_for(schedule, week, "BUF")
+    team = team_with(
+        entry("Doubtful Starter", "WR", "KC", injury="QUESTIONABLE"),
+        entry("Not Yet Played", "WR", "BUF", slot="BN"),
+    )
+    assert find_replacements(
+        team, "WR", schedule, week, early - dt.timedelta(hours=1)
+    ) == ("Not Yet Played",)
+    assert find_replacements(
+        team, "WR", schedule, week, early + dt.timedelta(hours=1)
+    ) == ()
+
+
+def test_replacements_ignore_the_clock_when_not_given_one(schedule, week):
+    """`find_upcoming_byes` asks about next week, where this week's clock is
+    meaningless -- so the filter has to be opt-in."""
+    team = team_with(
+        entry("Doubtful Starter", "WR", "KC", injury="QUESTIONABLE"),
+        entry("Some Backup", "WR", "BUF", slot="BN"),
+    )
+    assert find_replacements(team, "WR", schedule, week) == ("Some Backup",)

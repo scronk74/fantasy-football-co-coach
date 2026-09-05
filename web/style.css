@@ -160,7 +160,7 @@ td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: to
 /* The thick left edge repeats what the chip already says in words -- colour
    reinforcing text, never carrying it alone (UX rule 5). */
 .finding.k-empty_slot, .finding.k-out { border-left-color: var(--bad); }
-.finding.k-bye, .finding.k-bye_next_week { border-left-color: var(--warn); }
+.finding.k-at_risk, .finding.k-bye, .finding.k-bye_next_week { border-left-color: var(--warn); }
 .finding.done { opacity: 0.6; border-left-color: var(--muted); }
 .finding h3 { font-size: 1rem; margin: 0 0 0.3rem; font-weight: 600; }
 .finding .kind {
@@ -168,7 +168,7 @@ td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: to
   border: 1px solid currentColor; border-radius: 4px; padding: 0 0.35rem;
 }
 .finding .k-empty_slot, .finding .k-out { color: var(--bad); }
-.finding .k-bye, .finding .k-bye_next_week { color: var(--warn); }
+.finding .k-at_risk, .finding .k-bye, .finding .k-bye_next_week { color: var(--warn); }
 .finding .slot { font-weight: 700; }
 .finding .team, .finding .nobody { color: var(--muted); font-weight: 400; }
 .finding .reason { margin: 0.2rem 0; }

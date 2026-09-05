@@ -64,3 +64,47 @@ def test_something_without_fetch_league_does_not_satisfy_protocol():
         pass
 
     assert not isinstance(NotAnAdapter(), LeagueAdapter)
+
+
+# --- uncertain, which is neither out nor healthy (E6) ---------------------
+
+
+def test_questionable_and_doubtful_are_uncertain_not_out():
+    """D-010's split, from the other side.
+
+    Treating these as OUT would bench players who mostly go on to play; not
+    classifying them at all is what left the inactives sweep with no input.
+    """
+    for status in ("QUESTIONABLE", "DOUBTFUL"):
+        assert entry(injury_status=status).is_certainly_out is False
+        assert entry(injury_status=status).is_uncertain is True
+
+
+def test_a_certain_out_is_not_also_uncertain():
+    """Otherwise one starter yields both an `out` and an `at_risk` finding."""
+    for status in ("OUT", "INJURY_RESERVE", "SUSPENSION", "IR"):
+        assert entry(injury_status=status).is_uncertain is False
+
+
+def test_no_status_at_all_is_healthy():
+    """ESPN omits injuryStatus for the fit, which is most of a roster."""
+    assert entry(injury_status=None).is_uncertain is False
+    assert entry(injury_status="").is_uncertain is False
+    assert entry(injury_status="   ").is_uncertain is False
+
+
+def test_active_is_healthy():
+    for status in ("ACTIVE", "active", "NORMAL"):
+        assert entry(injury_status=status).is_uncertain is False
+
+
+def test_an_unrecognized_status_counts_as_doubt_rather_than_health():
+    """The direction this defaults in is the whole point.
+
+    ESPN has renamed fields under this project twice. A new designation read as
+    healthy would drop a starter out of the one check that runs while he is
+    still swappable, silently. Read as doubt it costs at most one alert about a
+    player who was fine.
+    """
+    assert entry(injury_status="GAME_TIME_DECISION").is_uncertain is True
+    assert entry(injury_status="SOMETHING_ESPN_ADDED").is_uncertain is True

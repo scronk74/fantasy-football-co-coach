@@ -28,6 +28,10 @@ _STATUS_LINE = {
 _KIND_LABEL = {
     "empty_slot": "EMPTY",
     "out": "OUT",
+    # Not "QUESTIONABLE": the label is the tool's judgement, and the player's
+    # actual designation is named in the reason line underneath. Six characters
+    # keeps the column aligned with the widest of the others.
+    "at_risk": "RISK",
     "bye": "BYE",
     "bye_next_week": "BYE+1",
 }

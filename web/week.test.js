@@ -229,3 +229,31 @@ test("a finding card carries its kind as a class so the edge can echo the chip",
   assert.match(findingHtml(F({ kind: "bye" })), /class="finding k-bye/);
   assert.match(findingHtml(F({ actionable: false })), /k-out done/);
 });
+
+// --- the inactives sweep's finding (E6) ----------------------------------
+
+test("an at-risk finding is labelled as a judgement, not as ESPN's word", () => {
+  // "At risk" is this tool's read. The player's actual designation lives in
+  // the reason line, so a reader never mistakes one for the other.
+  const html = findingHtml(F({
+    kind: "at_risk",
+    reason: "Still listed Questionable and his slot locks shortly. Bench Guy is available and plays this week.",
+    severity: 1,
+  }));
+  assert.match(html, /At risk/);
+  assert.match(html, /Still listed Questionable/);
+});
+
+test("an at-risk card carries its own kind class", () => {
+  assert.match(findingHtml(F({ kind: "at_risk" })), /class="finding k-at_risk/);
+});
+
+test("an at-risk finding sorts above a bye when both are still fixable", () => {
+  // Its slot freezes sooner: a bye slot stays changeable until the week's last
+  // kickoff. The page re-derives none of this -- severity arrives from Python.
+  const rows = ordered([
+    F({ kind: "bye", player_name: "On Bye", severity: 2 }),
+    F({ kind: "at_risk", player_name: "Maybe Playing", severity: 1 }),
+  ]);
+  assert.deepEqual(rows.map((f) => f.player_name), ["Maybe Playing", "On Bye"]);
+});

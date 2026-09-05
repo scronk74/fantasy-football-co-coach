@@ -33,7 +33,13 @@ from ffcoach.notify.base import Notification
 # list, so nothing is hidden, only deferred to the full check.
 _MAX_LINES = 5
 
-_KIND_LABEL = {"empty_slot": "EMPTY", "out": "OUT", "bye": "BYE", "bye_next_week": "BYE+1"}
+_KIND_LABEL = {
+    "empty_slot": "EMPTY",
+    "out": "OUT",
+    "at_risk": "RISK",
+    "bye": "BYE",
+    "bye_next_week": "BYE+1",
+}
 
 
 def _when(moment: dt.datetime | None, tz: dt.tzinfo) -> str:
