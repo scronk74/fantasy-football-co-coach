@@ -41,3 +41,9 @@ test("navHtml adding a page to PAGES would not require touching this function", 
   // Guard against ever hardcoding page ids/labels inside navHtml itself.
   assert.doesNotMatch(navHtml.toString(), /Draft Board|My League|This Week/);
 });
+
+test("the Alerts page is in the nav", () => {
+  // F2's whole point is being reachable without remembering a URL. A control
+  // panel you have to know about is one you never open.
+  assert.ok(PAGES.some((page) => page.id === "alerts" && page.href === "alerts.html"));
+});

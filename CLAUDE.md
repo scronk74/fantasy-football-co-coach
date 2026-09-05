@@ -44,8 +44,8 @@ uv run ffcoach league            # ESPN league/rosters -> web/data/league.json
 uv run ffcoach league --fixture tests/fixtures/espn_league.json   # no ESPN access needed
 uv run ffcoach refresh           # populate the cache only
 uv run ffcoach init              # create the config files, list what is still missing
-uv run ffcoach doctor            # config, cache, alert channel, last run, remaining setup
-uv run ffcoach serve             # pages at http://127.0.0.1:8765/ (incl. /health.html)
+uv run ffcoach doctor            # config, cache, alert channel + prefs, last run, setup left
+uv run ffcoach serve             # pages at http://127.0.0.1:8765/ (incl. /alerts.html, /health.html)
 uv run ffcoach serve --lan       # ...reachable from other devices (opt-in)
 uv run ffcoach schedule --print  # the launchd plist, without installing it
 uv run ffcoach schedule --install   # ...and load it
@@ -201,6 +201,33 @@ names are refused at load, `doctor` reports *that* a channel is configured and n
 One trap already paid for: ntfy is published as **JSON to the server root**, not as
 `{server}/{topic}` with a `Title:` header. HTTP headers are ASCII and every title this tool
 generates contains an em dash. → D-059
+
+### What may reach you is a separate file, on purpose
+
+`alerts.yaml` — per-kind switches, quiet hours, and a mute — is **not** part of `notify.yaml`, and
+the split is structural rather than tidy. The Alerts page writes this file over HTTP; `notify.yaml`
+holds the topic, which is the credential. Separate files mean the write endpoint has no field that
+could redirect where alerts go. → D-077
+
+- **It records what is switched *off*, never what is on.** A kind this build has not heard of still
+  alerts. Same closed-list direction as `HEALTHY`: an unrecognized kind costs one message you did
+  not need, not one you did.
+- **A mute is an instant, never a flag.** Every preset on the page expires by itself.
+- **An unreadable `alerts.yaml` refuses the run** rather than defaulting to alerting on everything.
+- **`allowed_by_prefs` runs before `decide`**, or a switched-off kind spends a strike on its way to
+  being suppressed.
+- **A preference governs the phone, never the check.** A disabled kind still appears in
+  `ffcoach check` and on the Week page (the D-011 precedent), and is **never** a blind spot — we
+  looked, and we found it, so `all_clear` keeps meaning what D-054 says.
+- **Silence you asked for is still reported.** `doctor` and the health panel name an active mute and
+  any switched-off kinds, and the panel drops the Alerts row to *unknown* rather than a green tick.
+  Without that, "I muted it and forgot" and "the cookies expired" look identical. → D-078
+- **`POST /api/alerts` is refused while `--lan` is on**, derived from the bind address rather than a
+  flag a caller can forget. Letting a network peer silence your alerts is a different order of bad
+  from letting one spend an ESPN fetch.
+
+There is deliberately **no per-kind tier and no threshold**: nothing produces a digest, and nothing
+numeric reaches a finding until G4 exists. A knob with nothing behind it is D-014's mistake.
 
 ### Repeats: two strikes, and the second one is spent late
 
@@ -407,6 +434,9 @@ below.
 - `league.yaml` — league settings. Gitignored; copy from `league.example.yaml`.
 - `notify.yaml` — where alerts go. Gitignored; copy from `notify.example.yaml`. **The ntfy topic
   name is a credential** (D-058).
+- `alerts.yaml` — *what* may reach you. Gitignored, holds **no credential** (that is the point of
+  the split, D-077), written by the Alerts page, and **optional**: absent means the pre-D4
+  defaults. No example file — `save_alert_prefs` generates its own comments.
 - `espn.yaml` — ESPN `espn_s2` / `SWID` session cookies. Gitignored; copy from
   `espn.example.yaml`. Kept **separate** from `league.yaml` so that file stays safe to share or
   screenshot. These cookies authenticate as the user; there is no documented expiry and no refresh

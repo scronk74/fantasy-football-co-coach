@@ -37,6 +37,10 @@ DEFAULT_PORT = 8765
 # against ESPN's unofficial API. A held-down button must not become a load
 # generator, so refreshes are spaced whatever the caller does.
 REFRESH_COOLDOWN_SECONDS = 30
+# Alert preferences are a handful of booleans and two integers. Anything this
+# large is not one of ours.
+MAX_BODY_BYTES = 8192
+
 LOCALHOST = "127.0.0.1"
 ALL_INTERFACES = "0.0.0.0"
 
@@ -60,19 +64,40 @@ class NoStoreHandler(SimpleHTTPRequestHandler):
 
     health: Callable[[], dict] | None = None
     refresh: Callable[[], tuple[bool, str]] | None = None
+    prefs: Callable[[], dict] | None = None
+    save_prefs: Callable[[dict], tuple[bool, str]] | None = None
+    # False when bound to every interface. `/api/refresh` already lets a
+    # network peer spend an ESPN fetch; letting one silence your alerts is a
+    # different order of bad, and bolting on auth is a thing to get wrong.
+    writable: bool = True
     _last_refresh: float = 0.0
 
     def do_GET(self) -> None:  # noqa: N802 -- BaseHTTPRequestHandler's name
-        if self.path.split("?")[0] == "/api/health":
+        route = self.path.split("?")[0]
+        if route == "/api/health":
             if self.health is None:
                 self._json(503, {"error": "health is not available"})
                 return
             self._json(200, self.health())
             return
+        if route == "/api/alerts":
+            if self.prefs is None:
+                self._json(503, {"error": "alert preferences are not available"})
+                return
+            body = dict(self.prefs())
+            # The page needs to know *before* the user edits anything, or the
+            # first they learn of it is a 403 on save.
+            body["writable"] = self.writable
+            self._json(200, body)
+            return
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path.split("?")[0] != "/api/refresh":
+        route = self.path.split("?")[0]
+        if route == "/api/alerts":
+            self._save_prefs()
+            return
+        if route != "/api/refresh":
             self._json(404, {"error": "not found"})
             return
         if self.refresh is None:
@@ -92,6 +117,40 @@ class NoStoreHandler(SimpleHTTPRequestHandler):
 
         ok, message = self.refresh()
         self._json(200 if ok else 500, {"ok": ok, "message": message})
+
+    def _save_prefs(self) -> None:
+        if self.save_prefs is None:
+            self._json(503, {"error": "alert preferences are not available"})
+            return
+        if not self.writable:
+            self._json(403, {
+                "error": (
+                    "alert preferences are read-only while serving to the "
+                    "network; restart without --lan to change them"
+                ),
+            })
+            return
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = -1
+        if not 0 < length <= MAX_BODY_BYTES:
+            self._json(400, {"error": "missing or oversized request body"})
+            return
+        try:
+            body = json.loads(self.rfile.read(length))
+        except (OSError, ValueError):
+            self._json(400, {"error": "body is not JSON"})
+            return
+        if not isinstance(body, dict):
+            self._json(400, {"error": "body must be a JSON object"})
+            return
+
+        ok, message = self.save_prefs(body)
+        # 400 rather than 500: a rejected save is the user's typo, and the
+        # message names the field.
+        self._json(200 if ok else 400, {"ok": ok, "message": message})
 
     def _json(self, status: int, body: dict) -> None:
         payload = json.dumps(body).encode()
@@ -157,12 +216,21 @@ def build_server(
     port: int,
     health: Callable[[], dict] | None = None,
     refresh: Callable[[], tuple[bool, str]] | None = None,
+    prefs: Callable[[], dict] | None = None,
+    save_prefs: Callable[[dict], tuple[bool, str]] | None = None,
 ) -> HTTPServer:
     # Bound onto a subclass rather than the shared class, so two servers in one
     # test process cannot answer each other's requests.
     handler_class = type(
-        "BoundHandler", (NoStoreHandler,), {"health": staticmethod(health) if health else None,
-                                            "refresh": staticmethod(refresh) if refresh else None}
+        "BoundHandler", (NoStoreHandler,), {
+            "health": staticmethod(health) if health else None,
+            "refresh": staticmethod(refresh) if refresh else None,
+            "prefs": staticmethod(prefs) if prefs else None,
+            "save_prefs": staticmethod(save_prefs) if save_prefs else None,
+            # Derived from the bind address rather than passed as a flag, so a
+            # caller cannot ask for LAN *and* writes by forgetting an argument.
+            "writable": host != ALL_INTERFACES,
+        }
     )
     handler = partial(handler_class, directory=str(root))
     try:

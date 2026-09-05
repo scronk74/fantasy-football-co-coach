@@ -227,3 +227,12 @@ td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: to
   .hrow { grid-template-columns: 1.4rem 1fr; }
   .hdetail { grid-column: 2; }
 }
+
+/* F2: the alert-control page. */
+.kindrow { display: flex; align-items: baseline; gap: 8px; padding: 5px 0;
+           cursor: pointer; }
+.kindrow input { flex: none; }
+.kindlabel { flex: 1; }
+.kindname { font-size: 12px; color: var(--muted); }
+.quietrow { margin: 6px 0 0 24px; color: var(--muted); font-size: 14px; }
+.quietrow select { font: inherit; }

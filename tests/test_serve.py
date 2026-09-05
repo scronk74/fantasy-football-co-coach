@@ -234,3 +234,129 @@ def test_two_servers_do_not_share_endpoint_state(project):
             srv.shutdown()
             srv.server_close()
             t.join(timeout=5)
+
+
+# --- F2: the alert-control endpoints -------------------------------------
+#
+# The security property worth a test rather than a comment: this endpoint
+# cannot reach the ntfy topic. That is structural -- the preferences live in
+# their own file -- so the test asserts the structure, not the intention.
+
+
+@pytest.fixture
+def prefs_server(project):
+    """A server wired the way `ffcoach serve` wires one, on localhost."""
+    from ffcoach.cli import _serve_prefs, _serve_save_prefs
+
+    class Args:
+        alerts_config = project / "alerts.yaml"
+
+    args = Args()
+    srv = build_server(
+        web_root(project), LOCALHOST, 0,
+        prefs=lambda: _serve_prefs(args),
+        save_prefs=lambda body: _serve_save_prefs(args, body),
+    )
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://{LOCALHOST}:{srv.server_address[1]}", args.alerts_config
+    srv.shutdown()
+    srv.server_close()
+    thread.join(timeout=5)
+
+
+def test_the_preferences_are_readable_before_the_file_exists(prefs_server):
+    base, path = prefs_server
+    body = httpx.get(f"{base}/api/alerts").json()
+    assert body["exists"] is False
+    assert body["writable"] is True
+    assert all(kind["enabled"] for kind in body["kinds"])
+
+
+def test_every_kind_arrives_with_a_sentence_a_human_can_read(prefs_server):
+    base, _ = prefs_server
+    for kind in httpx.get(f"{base}/api/alerts").json()["kinds"]:
+        assert kind["label"] and kind["label"] != kind["name"]
+
+
+def test_the_topic_is_not_in_the_payload(prefs_server):
+    """`notify.yaml` in this project holds SECRETTOPIC. It must not appear
+    here, and it cannot: this endpoint never opens that file."""
+    base, _ = prefs_server
+    assert "SECRETTOPIC" not in httpx.get(f"{base}/api/alerts").text
+
+
+def test_a_save_writes_the_file_and_reads_back(prefs_server):
+    base, path = prefs_server
+    response = httpx.post(f"{base}/api/alerts", json={"kinds": {"bye_next_week": False}})
+    assert response.status_code == 200 and response.json()["ok"] is True
+    assert path.exists()
+    after = httpx.get(f"{base}/api/alerts").json()
+    off = [k["name"] for k in after["kinds"] if not k["enabled"]]
+    assert off == ["bye_next_week"]
+
+
+def test_a_rejected_save_answers_400_and_names_the_field(prefs_server):
+    base, path = prefs_server
+    response = httpx.post(f"{base}/api/alerts", json={"kinds": {"nonsense": False}})
+    assert response.status_code == 400
+    assert "unknown alert kind" in response.json()["message"]
+    assert not path.exists()
+
+
+def test_a_save_cannot_touch_the_notify_config(prefs_server, project):
+    """Belt and braces on the structural claim: even a payload that names the
+    topic changes nothing about where alerts go."""
+    base, _ = prefs_server
+    httpx.post(f"{base}/api/alerts", json={"ntfy": {"topic": "attacker"}, "topic": "attacker"})
+    assert "SECRETTOPIC" in (project / "notify.yaml").read_text()
+    assert "attacker" not in (project / "notify.yaml").read_text()
+
+
+def test_a_body_that_is_not_an_object_is_refused(prefs_server):
+    base, _ = prefs_server
+    response = httpx.post(f"{base}/api/alerts", content=b"[1,2,3]",
+                          headers={"Content-Type": "application/json"})
+    assert response.status_code == 400
+
+
+def test_an_oversized_body_is_refused_without_being_read(prefs_server):
+    base, _ = prefs_server
+    response = httpx.post(f"{base}/api/alerts", content=b"x" * 20000,
+                          headers={"Content-Type": "application/json"})
+    assert response.status_code == 400
+
+
+def test_serving_to_the_network_makes_the_preferences_read_only(project):
+    """`/api/refresh` already lets a network peer spend an ESPN fetch. Letting
+    one silence your alerts is a different order of bad, so `--lan` refuses --
+    and it is derived from the bind address, not from a flag a caller can
+    forget to pass alongside `--lan`."""
+    from ffcoach.cli import _serve_prefs, _serve_save_prefs
+    from ffcoach.serve import ALL_INTERFACES
+
+    class Args:
+        alerts_config = project / "alerts.yaml"
+
+    args = Args()
+    srv = build_server(
+        web_root(project), ALL_INTERFACES, 0,
+        prefs=lambda: _serve_prefs(args),
+        save_prefs=lambda body: _serve_save_prefs(args, body),
+    )
+    thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://{LOCALHOST}:{srv.server_address[1]}"
+    try:
+        # Readable, and it says so before anything is edited -- the page needs
+        # to disable its own form rather than discover this on save.
+        assert httpx.get(f"{base}/api/alerts").json()["writable"] is False
+
+        response = httpx.post(f"{base}/api/alerts", json={"kinds": {"out": False}})
+        assert response.status_code == 403
+        assert "--lan" in response.json()["error"]
+        assert not args.alerts_config.exists()
+    finally:
+        srv.shutdown()
+        srv.server_close()
+        thread.join(timeout=5)

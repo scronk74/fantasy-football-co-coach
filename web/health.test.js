@@ -6,6 +6,7 @@ import {
   UNKNOWN,
   ageText,
   alertingHostRow,
+  alertsRow,
   healthHtml,
   heartbeatRow,
   lastRunRow,
@@ -167,4 +168,38 @@ test("ageText degrades rather than printing NaN", () => {
   assert.equal(ageText(undefined), "unknown");
   assert.equal(ageText(45), "45s ago");
   assert.equal(ageText(7200), "2h ago");
+});
+
+// --- D4 made silence something you can ask for ---
+
+test("an active mute is shown, not hidden behind a green tick", () => {
+  // Otherwise a mute you forgot about looks exactly like a dead channel,
+  // which is the one confusion this panel exists to prevent.
+  const row = alertsRow(P({
+    alerts: { configured: true, channel: "ntfy", muted_until: "2026-09-13T15:00:00Z" },
+  }));
+  assert.equal(row.state, UNKNOWN);
+  assert.match(row.detail, /muted until/);
+});
+
+test("switched-off kinds drag the row below OK", () => {
+  const row = alertsRow(P({
+    alerts: { configured: true, channel: "ntfy", kinds_off: ["bye_next_week"] },
+  }));
+  assert.equal(row.state, UNKNOWN);
+  assert.match(row.detail, /1 kind switched off/);
+});
+
+test("nothing switched off is still a clean tick", () => {
+  const row = alertsRow(P({
+    alerts: { configured: true, channel: "ntfy", kinds_off: [], muted_until: null },
+  }));
+  assert.equal(row.state, OK);
+});
+
+test("an unreadable preferences file is a health problem, not a detail", () => {
+  const row = alertsRow(P({
+    alerts: { configured: true, channel: "ntfy", prefs_error: "alerts.yaml: bad" },
+  }));
+  assert.equal(row.state, BAD);
 });

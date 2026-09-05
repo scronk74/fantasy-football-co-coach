@@ -34,6 +34,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from ffcoach.advisors.lineup import LineupFinding
+from ffcoach.config import AlertPrefs
 
 # How close to the deadline the second and final alert is spent. Three hours
 # clears a Sunday-morning inactives ruling with time to make a claim, and is
@@ -201,3 +202,32 @@ def decide(
         keys_sent.append(key)
 
     return SendDecision(send=send, held=tuple(held), keys_sent=tuple(keys_sent))
+
+
+def allowed_by_prefs(
+    findings: Sequence[LineupFinding],
+    prefs: "AlertPrefs",
+    now: dt.datetime,
+) -> tuple[list[LineupFinding], tuple[str, ...]]:
+    """D4: which findings the user has agreed to be interrupted about.
+
+    Runs *before* `decide`, and the split is deliberate. This answers "may this
+    kind ever reach me"; `decide` answers "may it reach me again, right now".
+    Collapsing them would let a preference spend a strike.
+
+    Held findings are returned as reasons rather than dropped, for the same
+    reason every other suppression is: a message you did not get needs a
+    visible cause, or the next silent week is unexplainable.
+    """
+    if prefs.muted_at(now):
+        lifts = prefs.mute_until.astimezone(dt.UTC).isoformat(timespec="minutes")
+        return [], (f"all alerts muted until {lifts}",)
+
+    kept: list[LineupFinding] = []
+    held: list[str] = []
+    for finding in findings:
+        if prefs.sends(finding.kind):
+            kept.append(finding)
+        else:
+            held.append(f"{_describe(finding)}: {finding.kind} alerts are switched off")
+    return kept, tuple(held)

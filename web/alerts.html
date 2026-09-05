@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alerts</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav id="nav" class="sitenav"></nav>
+<header>
+  <h1>Alerts</h1>
+  <p class="headline" id="headline">Loading…</p>
+  <p class="status" id="where"></p>
+</header>
+<main id="body" hidden>
+  <section>
+    <h2>What may interrupt you</h2>
+    <div id="kinds"></div>
+    <p class="howto">Switching one off stops it <em>sending</em>. It still appears
+      on This Week and in <code>ffcoach check</code> — you are choosing what
+      reaches your phone, not what the tool looks for.</p>
+  </section>
+
+  <section>
+    <h2>Quiet hours</h2>
+    <div id="quiet"></div>
+    <p class="howto">Deferred, never dropped: the problem is still on the roster,
+      so the next run after the window finds it again. A deadline that falls
+      inside quiet hours always wins.</p>
+  </section>
+
+  <section>
+    <h2>Mute everything</h2>
+    <p id="mute-state" class="status"></p>
+    <p id="mute-buttons"></p>
+    <p class="howto">Every mute expires on its own. There is no permanent one —
+      that is how a season ends in silence.</p>
+  </section>
+
+  <p>
+    <button id="save" class="mark">Save</button>
+    <span class="status" id="note"></span>
+  </p>
+</main>
+<footer>
+  <p class="howto">Your ntfy topic is not on this page and cannot be changed from
+    it. It lives in <code>notify.yaml</code>, which this page never touches.</p>
+</footer>
+<script type="module" src="alerts_main.js"></script>
+</body>
+</html>

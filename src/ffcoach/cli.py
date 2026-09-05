@@ -21,13 +21,18 @@ from ffcoach.cache import Cache
 from ffcoach.check import LEAGUE_TZ, CheckError, SourceHealth, build_check
 from ffcoach.host import is_scheduler_host, normalize_host, this_host
 from ffcoach.config import (
+    ALERT_KIND_LABELS,
+    ALERT_KINDS,
+    AlertPrefs,
     ConfigError,
+    load_alert_prefs,
     load_config,
     load_espn_credentials,
     load_notify_config,
     new_topic,
+    prefs_from_payload,
+    save_alert_prefs,
     set_scheduler_host,
-    write_notify_config,
     write_notify_config,
 )
 from ffcoach.leagues.espn import parse_league
@@ -43,7 +48,7 @@ from ffcoach.notify.base import DeliveryError, Notification
 from ffcoach.notify.heartbeat import Heartbeat
 from ffcoach.notify.history import AlertHistory
 from ffcoach.notify.message import notification_for
-from ffcoach.notify.policy import QuietHours, decide
+from ffcoach.notify.policy import QuietHours, allowed_by_prefs, decide
 from ffcoach.notify.ntfy import ConsoleNotifier, NtfyNotifier
 from ffcoach.report.build import (
     board_payload,
@@ -167,6 +172,7 @@ def _parser() -> argparse.ArgumentParser:
             # would quietly check something other than what the CLI checks.
             p.add_argument("--espn-config", default=Path("espn.yaml"), type=Path)
             p.add_argument("--notify-config", default=Path("notify.yaml"), type=Path)
+            p.add_argument("--alerts-config", default=Path("alerts.yaml"), type=Path)
             p.add_argument("--log", default=Path(".ffcoach-runs.jsonl"), type=Path)
             p.add_argument("--out", default=Path("web/data/check.json"), type=Path)
             p.add_argument("--season", type=int, default=dt.date.today().year)
@@ -209,6 +215,7 @@ def _parser() -> argparse.ArgumentParser:
             p.add_argument("--log", default=Path(".ffcoach-runs.jsonl"), type=Path)
         if name in ("check", "notify", "init", "doctor"):
             p.add_argument("--notify-config", default=Path("notify.yaml"), type=Path)
+            p.add_argument("--alerts-config", default=Path("alerts.yaml"), type=Path)
         if name in ("init", "doctor"):
             p.add_argument("--espn-config", default=Path("espn.yaml"), type=Path)
         if name == "league":
@@ -544,6 +551,7 @@ def _serve_health(args):
         plist_exists=plist_present(),
         agent_loaded=_agent_loaded(),
         setup_steps=_setup_steps(args),
+        alerts_path=_alerts_path(args),
     )
 
 
@@ -580,6 +588,69 @@ def _serve_refresh(args):
     return code != EXIT_ERROR, f"check finished (exit {code})"
 
 
+def _alerts_path(args) -> Path:
+    return Path(getattr(args, "alerts_config", None) or "alerts.yaml")
+
+
+def _serve_prefs(args) -> dict:
+    """What the Alerts page shows. Nothing here is a secret -- by construction.
+
+    The topic lives in `notify.yaml`, which this endpoint neither reads nor
+    writes, so there is no field to accidentally leak (D-058).
+    """
+    path = _alerts_path(args)
+    try:
+        prefs = load_alert_prefs(path)
+        error = None
+    except ConfigError as exc:
+        # Shown rather than swallowed: a file that will not parse is refused by
+        # `check` too, so the page must say why alerts are about to fail.
+        prefs, error = AlertPrefs(), str(exc)
+
+    return {
+        "schema_version": 1,
+        "path": str(path),
+        "exists": path.exists(),
+        "error": error,
+        "kinds": [
+            {
+                "name": kind,
+                "label": ALERT_KIND_LABELS[kind],
+                "enabled": prefs.sends(kind),
+            }
+            for kind in ALERT_KINDS
+        ],
+        "quiet_hours": {
+            "enabled": prefs.quiet_enabled,
+            "start": prefs.quiet_start,
+            "end": prefs.quiet_end,
+        },
+        "mute_until": prefs.mute_until.isoformat() if prefs.mute_until else None,
+    }
+
+
+def _serve_save_prefs(args, body: dict) -> tuple[bool, str]:
+    """Validate and write. Returns `(ok, message)`; never raises."""
+    path = _alerts_path(args)
+    try:
+        current = load_alert_prefs(path) if path.exists() else AlertPrefs()
+    except ConfigError:
+        # An unreadable file is replaced rather than merged into -- merging
+        # onto values we could not parse would carry the fault forward.
+        current = AlertPrefs()
+    try:
+        prefs = prefs_from_payload(body, current)
+        save_alert_prefs(path, prefs)
+    except ConfigError as exc:
+        return False, str(exc)
+    except OSError as exc:
+        return False, f"could not write {path}: {exc}"
+
+    off = len(prefs.disabled_kinds)
+    muted = " · muted" if prefs.mute_until else ""
+    return True, f"Saved to {path} ({off} of {len(ALERT_KINDS)} kinds off){muted}."
+
+
 def _run_serve(args) -> int:
     """Serve `web/` until interrupted."""
     try:
@@ -589,6 +660,8 @@ def _run_serve(args) -> int:
             root, host, args.port,
             health=lambda: _serve_health(args),
             refresh=lambda: _serve_refresh(args),
+            prefs=lambda: _serve_prefs(args),
+            save_prefs=lambda body: _serve_save_prefs(args, body),
         )
     except ServeError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -606,6 +679,7 @@ def _run_serve(args) -> int:
         print()
         print("  Listening on every interface. Anyone on this network can read")
         print("  your roster and league. Use plain `ffcoach serve` to keep it local.")
+        print("  Alert preferences are read-only while --lan is on.")
     if args.open_browser:
         import webbrowser
 
@@ -808,23 +882,40 @@ def _deliver(args, result, now, outcome: dict, tz) -> int | None:
     # is then between a simulated instant and a real one -- silently wrong
     # everywhere the flag is used, and invisible in production where they agree.
     history = AlertHistory(args.cache, now=now.timestamp)
-    quiet = QuietHours(enabled=not args.ignore_quiet_hours)
-    plan = decide(
-        result.actionable, result.week, history.records(), now, quiet, tz
+
+    # D4 runs before D3, and the order is load-bearing: a kind you switched
+    # off must not spend a strike on its way to being suppressed.
+    try:
+        prefs = load_alert_prefs(getattr(args, "alerts_config", Path("alerts.yaml")))
+    except ConfigError as exc:
+        # Refuse rather than fall back to "alert about everything": a config
+        # this tool cannot read is one whose author believes something is
+        # switched off, and guessing the opposite is how a mute becomes a buzz
+        # at 3am.
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    wanted, by_prefs = allowed_by_prefs(result.actionable, prefs, now)
+    quiet = QuietHours(
+        start_hour=prefs.quiet_start,
+        end_hour=prefs.quiet_end,
+        enabled=prefs.quiet_enabled and not args.ignore_quiet_hours,
     )
+    plan = decide(wanted, result.week, history.records(), now, quiet, tz)
 
     # A suppressed alert is a decision, not an absence. Printed every time so
     # "you were not told" always has a visible reason attached to it.
-    for reason in plan.held:
+    held = by_prefs + plan.held
+    for reason in held:
         print(f"  held: {reason}")
-    outcome["held"] = len(plan.held)
+    outcome["held"] = len(held)
 
     note = notification_for(result, tz, plan.send) if plan.send else None
     if note is None:
         # D-016: zero interrupts in a clean week is the system working. Said out
         # loud so "nothing sent" is never confused with a failure to send --
         # which is exactly what the dead-man's switch exists for.
-        why = result.status if not plan.held else "everything held by policy"
+        why = result.status if not held else "everything held by policy"
         print(f"Nothing to send ({why}); no message dispatched.")
         return None
 
@@ -1240,6 +1331,29 @@ def main(argv: list[str] | None = None) -> int:
                 print("Scheduler: not recorded — any machine here may alert")
         except ConfigError as exc:
             print(f"Alerts:   not configured — {exc}")
+
+        # D4 made silence something you can ask for, so `doctor` has to say
+        # when it was asked for. Without this line, "I stopped getting alerts"
+        # and "I muted it on Sunday and forgot" are the same symptom.
+        try:
+            prefs = load_alert_prefs(_alerts_path(args))
+        except ConfigError as exc:
+            print(f"Prefs:    UNREADABLE — {exc}")
+            print("          alerts will not be sent until this parses")
+        else:
+            now = dt.datetime.now(dt.UTC)
+            if prefs.muted_at(now):
+                print(f"Prefs:    MUTED until {prefs.mute_until.isoformat()} "
+                      "— nothing will be sent")
+            elif prefs.disabled_kinds:
+                off = ", ".join(sorted(prefs.disabled_kinds))
+                print(f"Prefs:    {len(prefs.disabled_kinds)} kind(s) switched off: {off}")
+            else:
+                print("Prefs:    every kind may alert")
+            if prefs.quiet_enabled:
+                print(f"          quiet {prefs.quiet_start:02d}:00-{prefs.quiet_end:02d}:00 "
+                      "(a deadline inside the window still wins)")
+
         # The diagnostic payoff of E1: "it has been quiet" and "it has been
         # broken since Thursday" look identical without this.
         for line in _last_run_lines(RunLog(Path(".ffcoach-runs.jsonl"))):

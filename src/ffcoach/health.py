@@ -22,7 +22,7 @@ import datetime as dt
 from pathlib import Path
 
 from ffcoach.agent import DEFAULT_INTERVAL_MINUTES, LABEL, agent_plist_path
-from ffcoach.config import ConfigError, load_notify_config
+from ffcoach.config import ConfigError, load_alert_prefs, load_notify_config
 from ffcoach.host import is_scheduler_host, this_host
 from ffcoach.runlog import RunLog
 from ffcoach.watchdog import WatchdogConfig, assess
@@ -67,6 +67,7 @@ def health_payload(
     plist_exists: bool | None = None,
     agent_loaded: bool | None = None,
     setup_steps: list[tuple[bool, str, str]] | None = None,
+    alerts_path: Path | None = None,
 ) -> dict:
     """Everything the panel shows, built fresh.
 
@@ -80,7 +81,15 @@ def health_payload(
     last_record = last[0] if last else None
     last_success = run_log.last_success()
 
-    alerts: dict = {"configured": False, "channel": None, "reason": None}
+    alerts: dict = {
+        "configured": False, "channel": None, "reason": None,
+        # D4 introduced a way to make this tool silent on purpose, and silence
+        # is the failure this whole product is built to make impossible. So a
+        # mute has to be visible somewhere a person looks for "why am I not
+        # being told anything" -- otherwise it is indistinguishable from a
+        # dead channel.
+        "muted_until": None, "kinds_off": [],
+    }
     heartbeat = {"configured": False}
     scheduler: dict = {
         "host": None,
@@ -97,6 +106,18 @@ def health_payload(
     except ConfigError as exc:
         alerts["reason"] = str(exc)
         conf = None
+
+    if alerts_path is not None:
+        try:
+            prefs = load_alert_prefs(alerts_path)
+        except ConfigError as exc:
+            # An unreadable file stops `check` from sending at all, so it is a
+            # health problem rather than a preferences detail.
+            alerts["prefs_error"] = str(exc)
+        else:
+            alerts["kinds_off"] = sorted(prefs.disabled_kinds)
+            if prefs.muted_at(now):
+                alerts["muted_until"] = prefs.mute_until.isoformat()
 
     if conf is not None:
         # Whether, never which. The topic is a credential (D-058) and the
