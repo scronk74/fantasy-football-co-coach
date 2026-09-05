@@ -2,23 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**How to read this file.** It carries invariants, traps, and commands — what changes what you do
+*this turn*. The reasoning behind each one lives in `ROADMAP.md` §6 as a numbered decision; a
+`D-NNN` reference means "go read that before arguing with this." Do not copy rationale back
+into this file: it is loaded into every session, and the decision log is not.
+
 ## What this project is for
 
-**In-season alerting that prevents missed points.** One ESPN league, one user. The
-value is: a starter is on bye, is OUT, or a slot is empty — and you find out while you
-can still fix it.
+**In-season alerting that prevents missed points.** One ESPN league, one user. A starter is on
+bye, is OUT, or a slot is empty — and you find out while you can still fix it.
 
-**The draft board is legacy scaffolding, not the product.** `web/index.html`,
-`advisors/draft.py`, `model/value.py`, `model/tiers.py` and `sources/ffcalc.py` were
-built while the league invite was outstanding, because they were the only thing
-buildable without a league. On 2026-09-03 the user said, unprompted: *"I do not need
-this application to help me with the draft in any way."* That code stays (deleting it
-is a third of the test suite) but it earns no new features, and **"Phase 1 complete"
-in the planning docs does not mean the valuable half is done** — as of 2026-09-03
-`advisors/lineup.py` is 543 tested lines with no production caller at all.
-
-If you are picking up work here, the critical path is `ffcoach check` → a notifier →
-the Week page. See `ROADMAP.md` §1, D-050, and R-4.
+**The draft board is legacy scaffolding, not the product** (D-050). `web/draft.html`,
+`advisors/draft.py`, `model/value.py`, `model/tiers.py`, `sources/ffcalc.py`. It stays — deleting
+it is a third of the test suite — but it earns no new features. "Phase 1 complete" in the older
+planning docs does not mean the valuable half is done.
 
 ## Commands
 
@@ -29,7 +26,7 @@ uv run pytest tests/test_match.py::test_enrich_attaches_crosswalk_ids -v   # sin
 npm test                         # browser logic; installs no npm packages
 ```
 
-`npm test` runs `node --test web/*.test.js`. The glob matters: `node --test web/` fails on
+`npm test` runs `node --test web/*.test.js`. **The glob matters**: `node --test web/` fails on
 Node 26, which treats a bare path as a module entry point rather than a directory to scan.
 
 ```bash
@@ -37,8 +34,8 @@ uv run ffcoach notify --init     # write notify.yaml with a fresh, unguessable t
 uv run ffcoach notify --test     # prove alerts reach your phone before relying on them
 uv run ffcoach check             # this week's lineup: what to fix, by when
 uv run ffcoach check --notify    # ...and send it
-uv run ffcoach check --notify --dry-run   # ...and print what it would have sent
-uv run ffcoach check --notify --ignore-quiet-hours   # ...even at 3am
+uv run ffcoach check --notify --dry-run            # ...and print what it would have sent
+uv run ffcoach check --notify --ignore-quiet-hours # ...even at 3am
 uv run ffcoach check --fixture tests/fixtures/espn_league.json \
       --my-swid '{ABCDEF12-3456-7890-ABCD-EF1234567890}' --season 2025 \
       --now 2025-10-01T09:00-04:00        # the whole decision, offline
@@ -55,18 +52,19 @@ uv run ffcoach schedule --install   # ...and load it
 uv run ffcoach schedule --status    # loaded? and has it actually run?
 ```
 
-View pages with `uv run ffcoach serve` (or any static server) — **not** by opening the
-file. `file://` blocks the `fetch()` of local JSON under CORS.
+Exit codes: `0` all clear · `1` could not run · `2` still actionable · `3` not a clean look.
+
+View pages with `uv run ffcoach serve` (or any static server) — **not** by opening the file.
+`file://` blocks the `fetch()` of local JSON under CORS.
 
 ## Architecture
 
 ### The dividing rule
 
-Deterministic Python core; Claude as the coach. **If it is the same every time it is a
-script; if it needs judgment it is the skill.** Advisors emit structured findings, never
-prose — a Claude Code skill (not yet built) reads the CLI's JSON and turns findings into
-coaching. This also controls token cost: scripts fetch and cache megabytes, the skill
-receives a compact summary.
+Deterministic Python core; Claude as the coach. **If it is the same every time it is a script;
+if it needs judgment it is the skill** (D-001). Advisors emit structured findings, never prose —
+a Claude Code skill (not yet built) reads the CLI's JSON and turns findings into coaching. This
+also controls token cost: scripts fetch and cache megabytes, the skill receives a compact summary.
 
 ### Pipeline
 
@@ -74,548 +72,354 @@ receives a compact summary.
 sources/ -> cache (SQLite) -> model/ -> advisors/ -> report/ -> web/data/*.json -> web/
 ```
 
-`model/` is pure: no network, no filesystem, no clock. That is the layer that must never be
-wrong, so it has no moving parts.
+`model/` is pure: no network, no filesystem, no clock. That is the layer that must never be wrong,
+so it has no moving parts.
 
 ### Every source module follows one template
 
-`sources/ffcalc.py` is the canonical example; `sleeper.py`, `crosswalk.py`, and
-`leagues/espn_client.py` all copy it. New sources should too:
+`sources/ffcalc.py` is canonical; `sleeper.py`, `crosswalk.py`, and `leagues/espn_client.py` copy
+it. New sources must too:
 
-- `*_URL` constant, `TTL_SECONDS`, and either a `CACHE_KEY` constant or a `_cache_key()`
-  function when the resource is parameterized
+- `*_URL`, `TTL_SECONDS`, and either `CACHE_KEY` or a `_cache_key()` function when parameterized
 - a module-specific `*Unavailable(Exception)`
-- a **`fetch_*` / `parse_*` split**: `fetch_*` does I/O and returns a `SourceResult`;
-  `parse_*` is pure, text in, typed objects out, and raises the module's exception with
-  "parse" in the message on malformed input (tests match on that word)
-- injectable `cache` and `client: httpx.Client | None = None`, with the `owns_client`
-  ownership dance and **stale-cache fallback on failure** — a failed fetch on a Sunday
-  morning serves old data rather than crashing
+- a **`fetch_*` / `parse_*` split**: `fetch_*` does I/O and returns a `SourceResult`; `parse_*` is
+  pure, text in, typed objects out, and raises the module's exception with **"parse"** in the
+  message on malformed input (tests match on that word)
+- injectable `cache` and `client: httpx.Client | None = None`, the `owns_client` ownership dance,
+  and **stale-cache fallback on failure** — a failed fetch on a Sunday morning serves old data
+  rather than crashing
 
-Two properties of that template are load-bearing and were both absent until 2026-08-31:
+Four invariants, each of which was once violated and produced a clean-looking wrong answer:
 
 - **`fetch_*` returns `SourceResult`, never bare text** (`sources/base.py`). It carries
-  `age_seconds`, `stale`, and the fetch error. Bare text made a live fetch and a week-old
-  cache indistinguishable, and both report paths then hardcoded `stale_seconds=None` — so
-  stale data was published with a current timestamp and `stale: false`. `freshest()` folds
-  several sources into one page-level age by taking the **oldest**, because a page is as
-  old as its oldest input — except a **lookup** passed as `lookups=`, which is exempt from
-  the age and not from the staleness. A lookup is a join table: nothing on the page comes
-  from it, it only resolves ids. The crosswalk's TTL is seven days and ADP's is six hours,
-  so folding them by age made a board whose every number was minutes old announce
-  "data 6d old", four days before a draft. A false alarm is how a reader learns to ignore
-  the banner. Past its TTL a lookup still flips `stale`, because a wrong bind shows up on
-  the page as the wrong player's bye week.
-- **The cache key encodes the request, not just the resource.** `espn_client._cache_key`
-  includes the sorted view list, because adding `mMatchup` to `VIEWS` otherwise kept
-  serving the body from before it: the request changed, the key did not, and the cache
-  answered a different question confidently. Same shape as the freshness bug this whole
-  section is about.
-- **`fetch_*` parses before it caches.** A 200 is not proof of a usable body: an ESPN
-  session-expiry page, a captive portal, and a truncated CSV all arrive with a good status
-  code. Caching the raw body first destroyed the last known-good copy at exactly the moment
-  it was needed. On an unparseable 200 the source falls back to cache like any other
-  failure. `stale_fallback()` in `sources/base.py` is the shared implementation.
+  `age_seconds`, `stale`, and the fetch error. → D-044
+- **`freshest()` folds sources by taking the oldest — except a `lookups=` argument**, which is
+  exempt from the *age* but not the *staleness*. A lookup is a join table: nothing on the page
+  comes from it, it only resolves ids. → D-053
+- **The cache key encodes the request, not just the resource** — `espn_client._cache_key` includes
+  the sorted view list. → D-069
+- **`fetch_*` parses before it caches.** A 200 is not proof of a usable body: a session-expiry
+  page, a captive portal, and a truncated CSV all arrive with a good status code. On an
+  unparseable 200 the source falls back to cache like any other failure; `stale_fallback()` in
+  `sources/base.py` is the shared implementation. → D-044
 
-`Cache` also takes an injectable clock (`now: Callable[[], float]`), which is how TTL
-expiry and staleness are tested without sleeping. `get_with_age()` is what sources use:
-`get()` answers "may I use this", `get_with_age()` answers "may I use this, and how old
-is it".
+`Cache` takes an injectable clock (`now: Callable[[], float]`), which is how TTL expiry and
+staleness are tested without sleeping. `get()` answers "may I use this"; `get_with_age()` answers
+"may I use this, and how old is it" — sources use the latter.
 
 ### Player identity is resolved before matching
 
-Sources have unrelated ID spaces. `sources/crosswalk.py` (DynastyProcess) maps one player
-across MFL / Sleeper / ESPN / GSIS / FantasyPros / PFR / CBS at once, so identity is
-resolved **once, by ID**, rather than by matching names pairwise between every pair of
-sources. Name matching has already failed here twice — accented characters, and nicknames.
+`sources/crosswalk.py` (DynastyProcess) maps one player across MFL / Sleeper / ESPN / GSIS /
+FantasyPros / PFR / CBS at once, so identity resolves **once, by ID** (D-008). Name matching has
+already failed here twice — accented characters, and nicknames.
 
-Non-obvious properties of that file, all verified against live data:
+Non-obvious properties of that data, all verified against live rows:
 
-- Missing values are the literal string `"NA"`, not empty cells. Every ID column reads
-  "100% populated" until you account for it; real coverage is 52–65%.
+- Missing values are the literal string `"NA"`, not empty cells. Every ID column reads "100%
+  populated" until you account for it; real coverage is 52–65%.
 - `merge_name` is a **curated alias**, not a lowercased `name`: "Andres Borregales" carries
-  "andy borregales". Both fields are indexed, and it is the only reason nickname-using
-  sources resolve.
-- Ambiguity is broken by preferring entries with a modern platform ID, then by team. That
-  is what separates Marvin Harrison Jr. from his Hall-of-Fame father — `normalize_name`
-  strips the "Jr." suffix, so both collapse to one key.
-- **Team defenses are absent from the crosswalk entirely.** They match by name only and
-  will always report as `unresolved`. This is structural, not a bug.
+  "andy borregales". Both fields are indexed, and it is the only reason nickname-using sources
+  resolve.
+- Ambiguity breaks by preferring a modern platform ID, then team — that is what separates Marvin
+  Harrison Jr. from his father, since `normalize_name` strips the "Jr." suffix.
+- **Team defenses are absent from the crosswalk entirely.** They match by name only and always
+  report `unresolved`. Structural, not a bug.
 
-`enrich()` returns an `EnrichResult` (players / unmatched / **fuzzy**). Surname-only matches
-are reported as fuzzy rather than applied silently, so a wrong bind is visible.
+`enrich()` returns an `EnrichResult` (players / unmatched / **fuzzy**). Surname-only matches are
+reported as fuzzy rather than applied silently.
 
 ### Nothing is dropped or guessed silently
 
-A failed source serves stale cache and marks the payload stale. Unmatched players are
-reported, never omitted. When identity is still ambiguous, `resolve()` returns
-`unresolved` rather than picking one. This is a deliberate, load-bearing property.
+A failed source serves stale cache and marks the payload stale. Unmatched players are reported,
+never omitted. When identity is ambiguous, `resolve()` returns `unresolved` rather than picking.
 
-**The recurring way it gets violated is a plausible default**, not an omission. Four
-found so far, each producing a clean-looking run:
+**The recurring way this gets violated is a plausible default**, not an omission (D-047). Four
+found so far, each producing a clean-looking run: an unknown `lineupSlotId` defaulting to `"BN"`;
+an unknown `proTeamId` defaulting to `"FA"`; a blank kickoff time dropping the schedule row, after
+which "no game row" read as **bye** (D-048); and team names read from ESPN's pre-2023
+`nickname`/`location` pair (D-067).
 
-- An unknown ESPN `lineupSlotId` defaulted to `"BN"`, so a starter whose slot id ESPN
-  renamed was skipped by every check.
-- An unknown `proTeamId` defaulted to `"FA"`, which matches no schedule row, so the player
-  looked like someone with nothing to worry about.
-- A schedule row with a blank kickoff time was dropped, after which "this team has no game
-  row" meant **bye** — a data-quality gap emitted as the single most certain fact the
-  product makes, at interrupt priority.
-- Team names read ESPN's **pre-2023** `nickname`/`location` pair and fell back to
-  `f"Team {id}"`. ESPN returns a single `name`, so on a live league *every* team rendered
-  as its own placeholder — "Just End The Season" showed as "Team 11" for a week. The
-  fixture encoded the old shape too, so the tests and the code agreed with each other and
-  both disagreed with ESPN.
-
-The rule that came out of it: **an unusable value becomes `UNKNOWN` plus a diagnostic, and
-a diagnostic must reach somewhere a human looks** — `League.diagnostics` travels into the
-payload and onto the page, not just to the stderr of a run nobody watched. Absence is not
-evidence; only a positive signal is. `Schedule.status()` returns `playing` / `bye` /
-`unknown` for this reason, and a bye additionally requires being the team's *single*
-missing week, so a truncated feed cannot manufacture byes.
+The rule: **an unusable value becomes `UNKNOWN` plus a diagnostic, and a diagnostic must reach
+somewhere a human looks.** `League.diagnostics` travels into the payload and onto the page, not
+just to the stderr of a run nobody watched. Absence is not evidence; only a positive signal is.
+`Schedule.status()` returns `playing` / `bye` / `unknown` for this reason, and a bye additionally
+requires being the team's *single* missing week.
 
 ### An all-clear must be earned, not inferred from silence
 
-`check.py` composes the whole safety decision — `ffcoach check` is the only thing that
-runs the detection Stage C built. Its central type is `CheckResult`, and the property
-worth understanding is `all_clear`, which requires **no findings *and* no blind spots**.
-
-A check that finds nothing is not a check that found nothing wrong. Without ESPN's
-`lineupSlotCounts` the empty-slot check never runs, and an empty starting slot produces
-exactly the same empty list as a healthy roster. A week-old cached roster, a derived
-week, and an unrecognized slot id fail the same way. `blind_spots` records each, so the
-statuses are:
+`check.py` composes the whole safety decision — `ffcoach check` is the only thing that runs the
+detection Stage C built. `CheckResult.all_clear` requires **no findings *and* no blind spots**
+(D-054), because a check that finds nothing is not a check that found nothing wrong. Without
+`lineupSlotCounts` the empty-slot check never runs and an empty slot looks exactly like a healthy
+roster. `blind_spots` records each, giving four statuses:
 
 ```
-problems    findings you can still act on        -> interrupt
-pre_draft   the roster does not exist yet        -> nothing to check
-unverified  nothing found, but we were partly blind -> say so, do not reassure
-all_clear   nothing found, and we looked everywhere -> silence is honest
+problems    findings you can still act on            -> interrupt
+pre_draft   the roster does not exist yet            -> nothing to check
+unverified  nothing found, but we were partly blind  -> say so, do not reassure
+all_clear   nothing found, and we looked everywhere  -> silence is honest
 ```
 
-This is the `UNKNOWN`-plus-diagnostic rule applied one level up: to the run, not the
-field. `pre_draft` was not designed — the first live run, four days before the real
-draft, emitted **nine** "claim someone by Friday" findings for a roster the draft would
-fill on Monday. It reads ESPN's `draftDetail.drafted` and tests `is False`, never
-truthiness: an absent field is `None`, and treating absence as "not drafted" would mute
-every alert for a season the first time ESPN renamed it.
-
-Exit codes, because the check runs unattended long before anyone reads its output:
-`0` all clear · `1` could not run · `2` still actionable · `3` not a clean look.
-`--now` refuses a naive instant rather than reading it as UTC and moving every deadline.
-
-### The inactives sweep is the one check that is a matter of timing
-
-Every other finding is true all week: a bye is a bye on Tuesday, an OUT ruling
-stays out. **QUESTIONABLE and DOUBTFUL are the exception, and D-010 deliberately
-kept them out of `is_certainly_out`** — most Questionable players play, so
-benching one on Wednesday loses points more often than it saves them. That left
-them producing no finding at all, which is right for six days and wrong for the
-last ninety minutes, when the NFL has published its inactives, the answer
-exists, and the swap is still legal.
-
-So `at_risk` (`_at_risk_openings`) is the only opening whose *existence* depends
-on `now`, not merely its actionability. Four properties are load-bearing:
-
-- **The window tracks the slot's lock, not the kickoff.** Under a weekly lineup
-  lock a Sunday starter froze on Thursday, so ninety minutes before his own game
-  is ninety minutes too late to tell anyone. `slot_lock` already resolves that
-  and is the only thing consulted.
-- **`RosterEntry.is_uncertain` treats an unrecognized status as doubt.**
-  `HEALTHY` is a closed list, so a designation ESPN adds or renames makes the
-  sweep look at a player it need not have — one wasted alert — rather than
-  dropping a starter out of the only check that runs while he is still
-  swappable. ESPN has renamed fields under this project twice.
-- **It reports even when the bench cannot cover it.** A waiver claim cannot
-  process inside ninety minutes, but an ESPN free agent can be added instantly,
-  so a real action remains. `plan_fix` already emits `ADD_BEFORE_LOCK` saying
-  exactly that, which is why this needs no special case — and silence here would
-  be indistinguishable from a healthy lineup.
-- **A certain zero outranks a maybe for the same bench player.**
-  `assign_replacements` now takes `priorities` (severity doubles as the value)
-  as a tiebreak *after* most-constrained-first. Constraint still comes first,
-  because a slot with one option must get it; certainty only decides a genuine
-  collision, which before E6 could not happen.
-
-`at_risk` sorts above `bye` despite being less certain, and the reason is time:
-it is only ever emitted inside the window before its slot freezes, while a bye
-starter's slot stays changeable until the week's *last* kickoff. Severity
-ordering and deadline ordering agree.
-
-**A replacement whose own game has kicked off is not a replacement.** Found by a
-test while building the sweep, and invisible until a check ran mid-week:
-`find_replacements` and `find_ir_candidates` now take an optional `now`.
-`plan_fix` already took the earliest of the replacements' locks, so the
-*deadline* was right and the finding merely went unactionable — which turned a
-problem the user could still fix (add a free agent) into one that read as too
-late. The parameter is optional because `find_upcoming_byes` asks about *next*
-week, where this week's clock says nothing.
+`pre_draft` reads ESPN's `draftDetail.drafted` and tests **`is False`**, never truthiness: an
+absent field is `None`, and treating absence as "not drafted" would mute every alert for a season
+the first time ESPN renamed it (D-055). `--now` refuses a naive instant rather than reading it as
+UTC and moving every deadline.
 
 ### Delivery: silence is the common case, and it has to be deliberate
 
-`notify/` is three small files: `base.py` (the `Notification` + `Notifier`
-interface), `message.py` (pure — `CheckResult` in, `Notification` or `None` out),
-and `ntfy.py` (the one channel, plus `ConsoleNotifier` for `--dry-run`).
+`notify/` is `base.py` (the `Notification` + `Notifier` interface), `message.py` (pure —
+`CheckResult` in, `Notification` or `None` out), and `ntfy.py` (the one channel, plus
+`ConsoleNotifier` for `--dry-run`).
 
-`Notification` carries a **tier** — `interrupt` or `digest` — never a raw priority
-number, because every service scales urgency differently (ntfy 1–5, Pushover −2..2).
-Mapping a tier onto a service's scale is the channel's job; deciding what deserves to
-buzz a phone during dinner is not. There are deliberately only two tiers: a third is a
-slider nobody calibrates, and the interrupt tier is only worth anything while it stays
-rare.
+`Notification` carries a **tier** — `interrupt` or `digest` — never a raw priority number, because
+every service scales urgency differently (ntfy 1–5, Pushover −2..2). There are deliberately only
+two: a third is a slider nobody calibrates, and the interrupt tier is only worth anything while it
+stays rare. → D-016
 
 **What is never sent**, each for its own reason:
 
 - a clean week — zero interrupts is the system working (D-016)
 - `pre_draft` — there is no roster yet
 - locked findings — reported on screen (D-011), useless on a phone
-- **blind spots alone** (D-057) — a stale ESPN fetch persists across every run of a
-  day, and until D3's repeat policy exists that is a spam machine. They ride *inside*
-  a message that was going out anyway
+- **blind spots alone** (D-057) — a stale ESPN fetch persists across every run of a day; they ride
+  *inside* a message that was going out anyway
 
-`--dry-run` returns a real `ConsoleNotifier` rather than setting a flag the caller
-branches on, so the dry run walks the same path as a live send and cannot drift from
-it. It still loads and validates the config: a dry run that skipped validation would
-happily "succeed" against a broken topic.
+`--dry-run` returns a real `ConsoleNotifier` rather than setting a flag the caller branches on, so
+the dry run walks the same path as a live send. It still loads and validates the config.
 
-**Setup is a command, not a ritual.** `ffcoach notify --init` generates the topic with
-`secrets` and writes `notify.yaml` at mode 600. The topic is generated rather than asked
-for: left to a human it becomes "ffcoach" or a name plus a surname, and a public ntfy
-topic has no authentication. `--init` refuses to clobber an existing file, because
-overwriting changes the topic out from under a phone that is already subscribed —
-alerts would go on being "delivered" to a topic nobody is listening to, which is the
-worst failure this particular file has. A test asserts the template it writes is one the
-loader accepts, so the two cannot drift.
+**Setup is a command, not a ritual.** `ffcoach notify --init` generates the topic with `secrets`
+and writes `notify.yaml` at mode 600. Generated rather than asked for: left to a human it becomes
+"ffcoach". `--init` **refuses to clobber** an existing file — overwriting changes the topic out
+from under a phone that is already subscribed. A test asserts the template it writes is one the
+loader accepts.
 
-**The ntfy topic name is the credential.** A public topic has no authentication at
-all — whoever knows the name can read your alerts and publish to them. So `notify.yaml`
-is gitignored, obvious names are refused at load, `doctor` reports that a channel is
-configured and never which topic, and `DeliveryError` messages omit it because an error
-string is the thing most likely to get pasted into an issue.
+**The ntfy topic name is the credential** (D-058). A public topic has no authentication: whoever
+knows the name can read your alerts and publish to them. So `notify.yaml` is gitignored, obvious
+names are refused at load, `doctor` reports *that* a channel is configured and never which, and
+`DeliveryError` messages omit it.
 
 One trap already paid for: ntfy is published as **JSON to the server root**, not as
-`{server}/{topic}` with a `Title:` header. HTTP headers are ASCII, and every title this
-tool generates contains an em dash, so the header form raises `UnicodeEncodeError`
-before anything is sent. A test caught it; the first alert of the season would have
-otherwise.
-
-### One machine alerts, and the other one says so
-
-`host.py` answers "is this the machine that is supposed to be alerting?", and the guard
-exists because of a failure that is silent in both directions:
-
-- **Two machines alerting sends everything twice.** Alert history is a local SQLite file,
-  so the two-strike counts never line up.
-- **Worse: a laptop that checks even occasionally keeps the heartbeat green while the
-  scheduler machine is face-down.** That is E3 defeated by its own mechanism — the
-  dead-man's switch cannot tell "the iMac is fine" from "the laptop pinged for it".
-
-`notify.yaml`'s `scheduler_host` is **empty by default** — one machine is the common case,
-and a guard you must configure before anything works buys nothing until a second machine
-exists. `ffcoach schedule --install` records the host automatically, because the moment a
-scheduler exists is exactly the moment a second machine becomes dangerous, and a guard
-nobody remembers to set is not a guard.
-
-A non-scheduler run **still checks and still writes the page**; it only declines to send
-and to ping, and it says so on stdout and in the run log. Hostnames are normalised before
-comparison: macOS returns `MacBook-Air.local` on one network and `MacBook-Air` on another,
-and a guard that fires after a Wi-Fi change is a guard that gets deleted.
-
-### Setup is a checklist, and both commands read the same one
-
-`_setup_steps()` returns `(done, what, how to fix it)` and is rendered by **both**
-`ffcoach init` and `ffcoach doctor`, so "what is missing" and "how do I fix it" cannot
-drift apart. `init` creates what it can and names what it cannot: the ESPN cookies need a
-browser, and a wizard that stalls there is worse than a checklist that names the step.
-
-### The health panel is built per request, and unknown is not healthy
-
-E1 and E3 already recorded everything the panel shows — the run log knows when a check
-last succeeded, the watchdog knows whether the tool has stopped working, `doctor` knows
-what setup remains. All of it lived in a JSONL file and a terminal command, which is to
-say nowhere the user looks on a Sunday morning.
-
-`GET /api/health` is composed **per request and never written to a file.** A health panel
-served from a snapshot would report "last run 3 minutes ago" out of a file written three
-hours ago — the one thing this page exists to make impossible, so its freshness cannot
-itself be cached.
-
-**Unknown is its own state.** `agent_loaded` is `True` / `False` / `None`, and `None`
-renders as "could not be determined" rather than as a green tick — a panel that says yes
-because it failed to ask is exactly the failure it is against. Any unknown drags the
-overall state below OK; any bad beats any unknown.
-
-**No secret is ever in the payload** — not the ntfy topic, not the heartbeat URL, not the
-cookies. Only whether each is configured. This JSON is served over the LAN under
-`serve --lan`, and it is what someone screenshots when asking for help. A test asserts the
-generated topic and ping URL are both absent from the serialised payload.
-
-`POST /api/refresh` runs a check on demand. **POST only** — a GET endpoint with a side
-effect can be fired by an `<img>` tag or a link preview, and this one reaches out to ESPN.
-It is rate-limited to one run per 30 seconds and answers **429**, because a button that
-appears to work while doing nothing is worse than one that says "not yet".
-
-### `ffcoach serve` is rooted at `web/`, and that is the point
-
-`espn.yaml` and `notify.yaml` live in the **project root, one directory above the pages**.
-A server rooted there would publish session cookies that authenticate as the user and an
-ntfy topic anyone can publish to. So `web_root()` resolves and checks for `index.html`
-before a socket is opened, and **refuses rather than falling back** — the plausible
-fallback here is exactly the directory holding the credentials. Five traversal shapes are
-tested against a real running server, not asserted.
-
-`.json` is served `Cache-Control: no-store`; HTML is not. `check.json` is rewritten every
-scheduler run, and a cached copy would show last hour's findings with this hour's
-confidence — the same lie `SourceResult` prevents, arriving through the HTTP layer.
-
-`--lan` binds every interface and **says what that means in the output**, not only in
-`--help`: the pages carry the user's roster and league. Credentials never leave the
-unserved project root, but a roster is not something to broadcast unknowingly. Default is
-localhost.
-
-### The scheduler: everything checkable is checked, because the rest cannot be
-
-`agent.py` builds the launchd plist and is pure; `cli.py` calls `launchctl`. R-2 says
-launchd correctness is untestable in CI, and that is true of the **loading** — it is not
-true of the plist, which is a function of two paths and an interval. A wrong plist is the
-worst outcome available here, because launchd will happily "run" it and fail silently
-every interval forever.
-
-**launchd, not cron** (D-022): cron skips a job it missed while the Mac was asleep and
-would be silently absent on exactly the mornings that matter. launchd fires a missed
-`StartInterval` once on wake.
-
-`build_agent` refuses more than it accepts, and every guard maps to a *silent* failure:
-
-- **absolute paths only** — launchd has no shell, no PATH, no working directory. A
-  relative path does not fail loudly; the job runs, cannot find `uv`, and exits nonzero
-  forever.
-- **`league.yaml` / `espn.yaml` / `notify.yaml` must exist** — scheduling a check that
-  cannot read its config, or has nowhere to send, is scheduling silence.
-- **interval clamped to 5–240 minutes** — below the floor this hammers an unofficial API;
-  above the ceiling it cannot catch a Sunday inactives ruling before kickoff.
-- **no `KeepAlive`** — it restarts a job the moment it exits, which for a periodic check
-  is an infinite loop against ESPN.
-- **`plistlib`, never a format string** — a directory named `Tom & Jerry` is ordinary and
-  hand-written XML breaks on it.
-
-Install does `bootout` then `bootstrap`, so reinstalling after an edit replaces the
-definition instead of sitting behind the loaded one. A failed `bootstrap` is reported and
-says the plist exists but nothing is scheduled — a scheduler that silently did not load
-is the failure this whole stage is about.
-
-`--status` reports **loaded** *and* **whether anything has actually run**, for the same
-reason `doctor` prints two lines: launchd accepting a plist says nothing about the job
-succeeding or reaching a phone. R-2 is precisely the gap between those two facts.
-
-### The dead-man's switch has two halves, and only one of them can work alone
-
-D-023's case is exact: **expired ESPN cookies produce no alert, which is
-indistinguishable from "nothing is wrong."** Every silent failure has that shape — a
-check that errors sends nothing, and sending nothing is what a clean week looks like. The
-better this product gets at staying quiet, the more dangerous its silence becomes.
-
-**On-host** (`watchdog.py`, pure, always active). Reads the run log after the line is
-written — this run is part of what it must see — and trips on either signal:
-
-- **three failed runs in a row.** Unambiguous, and needs no assumption about the
-  schedule. This is the cookie case.
-- **no *successful* run within `max_silence_hours`.** Catches what failures cannot: a
-  scheduler that was never loaded, or was unloaded, logs nothing at all, so there are no
-  failures to count. Measured from the last **success**, never the last run — a machine
-  erroring every fifteen minutes since Thursday is not alive.
-
-Escalating keys (`watchdog:failing:2`) mean one alert per severity step, so a long outage
-is re-raised as it worsens without being repeated on every scheduler cycle. `_watch` runs
-in a `finally` and swallows its own exceptions: it must never replace the real failure
-with a confusing one.
-
-**Off-host** (`notify/heartbeat.py`, optional). Nothing above survives its own host
-dying: a process on a dead machine reports nothing about the machine being dead. The only
-construction that does is one where **absence is the signal** — ffcoach GETs a URL after
-every successful run and an external service alerts when the pings stop. Deliberately a
-bare URL, not an integration: healthchecks.io, Cronitor, Better Stack and Uptime Kuma all
-accept "GET this to say I am alive". `fail_url` is separate and **never** guessed by
-appending `/fail`, which is one vendor's convention and silently wrong for the others.
-
-The heartbeat fires regardless of `--notify`: it is monitoring, not an alert, and
-suppressing it on a non-notifying run would fake a dead machine. When it is unconfigured
-`doctor` says so as an **exposure** — "if this machine dies, nothing will tell you" —
-because silence about missing monitoring reads as coverage. Ping URLs are credentials
-(a forged heartbeat makes a dead machine look alive) so they are redacted from the run
-log alongside the ntfy topic and the ESPN cookies.
-
-### Every run leaves a line
-
-`runlog.py` appends one JSON object per `ffcoach check` (D-041: JSONL, because the
-first reader is a person with `grep` at 9am on a Sunday and the second is a UI history
-view). Nothing recorded anything before this, which made a quiet Sunday morning
-indistinguishable between "your lineup is clean" and "the cookies expired at 6am and
-every run since has errored" — the product's main failure mode once a scheduler runs it
-unattended, and the reason **E3 could not be built**: a dead-man's switch is the question
-*when did a run last succeed?*, and that had no answer.
-
-Three properties are load-bearing:
-
-- **The logging wraps the run in a `finally`**, not appended at the end. The runs worth
-  diagnosing are the ones that crash; a check that raised and left no trace is exactly
-  the silence E3 must be able to tell apart from a clean week. `_run_check` is a thin
-  wrapper; `_check_body` holds the logic.
-- **Secrets never reach it.** The ntfy topic is a credential and the ESPN cookies
-  authenticate as the user, and a log is what gets pasted into an issue. `RunLog` scrubs
-  its `secrets` from every string at any depth; empty and `None` are dropped, since
-  scrubbing `""` would replace every gap between characters.
-- **A logging failure never takes down the check.** A full disk must not cost you the
-  alert: write errors warn on stderr and the run continues.
-
-`doctor` prints the last run **and**, when it failed, the last one that succeeded. Both
-deliberately: a recent *run* proves the scheduler is alive, a recent *success* proves it
-would have told you something. Reporting only the first is how a machine erroring every
-fifteen minutes since Thursday reads as healthy. A corrupt half-written line is skipped
-rather than allowed to blind every reader.
+`{server}/{topic}` with a `Title:` header. HTTP headers are ASCII and every title this tool
+generates contains an em dash. → D-059
 
 ### Repeats: two strikes, and the second one is spent late
 
-`notify/policy.py` is pure and answers the question detection cannot: the same finding
-appears on **every** run until it is fixed, and a scheduler runs the check many times an
-hour. Without it, "alert on actionable findings" means "alert every fifteen minutes
-until Sunday".
+`notify/policy.py` is pure and answers what detection cannot: the same finding appears on **every**
+run until it is fixed, and a scheduler runs many times an hour.
 
-**Quiet hours defer, they never drop** (D-018). Nothing is queued — the problem is still
-on the roster, so the next run after 08:00 finds it again. That is D-019's "the roster is
-the acknowledgment" applied to deferral. The exception: **quiet hours yield to a deadline
-that falls inside them.** Holding past the last moment something could be acted on
-produces silence indistinguishable from a clean week.
+- **Quiet hours defer, they never drop** (D-018). Nothing is queued — the problem is still on the
+  roster, so the next run after 08:00 finds it again. **Exception: quiet hours yield to a deadline
+  that falls inside them.**
+- **Two strikes, then nothing** (D-019). `LAST_CALL` (3h) — the reminder waits until it is useful.
+  `MIN_GAP` (45m) — **and waits for air after strike one**, or a problem first seen inside the
+  last-call window burns both strikes in one scheduler cycle. → D-060
 
-**Two strikes, then nothing** (D-019). The exception is *when* strike two is spent —
-inside a three-hour last-call window before the deadline, not on the next run. Two
-constants guard it, and the second was found by a test rather than by reasoning:
+Three ordering rules, all load-bearing (D-061):
 
-- `LAST_CALL` (3h) — the reminder waits until it is useful.
-- `MIN_GAP` (45m) — **and waits for air after strike one.** Without this, a problem
-  first seen *inside* the last-call window burns both strikes in one scheduler cycle
-  and then goes quiet for the three hours that mattered.
+- **Decide, send, then record.** Recording first spends a strike on a message that never arrived.
+- **A dry run records nothing.**
+- **`AlertHistory` takes the check's clock, not the wall clock.** With `--now` they differ, and
+  every "how long since the last alert" comparison is then wrong everywhere the flag is used and
+  invisible in production.
 
-Three ordering rules that are load-bearing:
-
-- **Decide, send, then record.** Recording first spends a strike on a message that never
-  arrived, and strike two is the one that lands ninety minutes before kickoff. A failed
-  delivery records nothing, so the next run retries.
-- **A dry run records nothing.** It delivered nothing, so it must not count as having
-  told you.
-- **`AlertHistory` takes the check's clock, not the wall clock.** With `--now` they
-  differ, and every "how long since the last alert" comparison is then between a
-  simulated instant and a real one — wrong everywhere the flag is used, invisible in
-  production where the two agree.
-
-History lives in the same SQLite file as the cache (D-041) in its own `alerts` table,
-**not** via `Cache`: a TTL store's whole contract is that entries expire, and an expired
-alert record hands a fixed problem a fresh pair of strikes.
-
-Every held alert prints its reason. A suppressed alert is a decision, and a decision
-nobody can see is a bug report waiting to happen.
+History lives in the same SQLite file as the cache (D-041) in its own `alerts` table, **not** via
+`Cache`: a TTL store's contract is that entries expire, and an expired alert record hands a fixed
+problem a fresh pair of strikes. Every held alert prints its reason.
 
 ### Deadlines: the kind of fix comes before the time
 
-`model/deadlines.py` returns a `FixPlan` (`BENCH_SWAP` / `WAIVER_CLAIM` /
-`ADD_BEFORE_LOCK` / `UNKNOWN`), each with a one-word verb, **not** a bare
-`(deadline, needs_waiver)` pair. The pair could describe an impossible transaction as a
-plausible one: with no bench option and waivers processing after the lock, clamping the
-deadline to the lock yields "claim someone by Thursday 8:15" for a claim that cannot
-process until Friday. A time alone cannot express "a claim is the wrong instrument". There
-is deliberately no `FREE_AGENT_ADD` kind — nothing fetches the free-agent pool, and a kind
-that can never be emitted is a promise the code does not keep.
+`model/deadlines.py` returns a `FixPlan` (`BENCH_SWAP` / `WAIVER_CLAIM` / `ADD_BEFORE_LOCK` /
+`UNKNOWN`), each with a one-word verb, **not** a bare `(deadline, needs_waiver)` pair — which
+could describe an impossible transaction as a plausible one ("claim someone by Thursday 8:15" for
+a claim that cannot process until Friday). There is deliberately **no `FREE_AGENT_ADD`**: nothing
+fetches the free-agent pool, and a kind that can never be emitted is a promise the code does not
+keep. → D-014
 
-Relatedly: **a finding with no kickoff is not a finding that never locks.** Bye and
-empty-slot findings are bounded by the week's *last* kickoff, after which no addition can
-score. `actionable(findings, now)` checks the deadline, not only the `locked` flag.
+**A finding with no kickoff is not a finding that never locks.** Bye and empty-slot findings are
+bounded by the week's *last* kickoff. `actionable(findings, now)` checks the deadline, not only
+the `locked` flag.
 
 ### Replacements are allocated across the roster, not per slot
 
-`find_replacements()` answers one slot's question well and every slot's question badly:
-run per finding it has no memory, so two OUT receivers and one healthy bench WR produced
-two cards each naming him — individually true, jointly impossible.
-`advisors/roster_plan.py` allocates once across all openings, most-constrained-first, so
-a dedicated RB slot is served before FLEX. IR is excluded from direct swaps (ESPN will not
-start a player out of an IR slot) and reported as `ir_candidates`, a prerequisite action.
+`find_replacements()` answers one slot's question well and every slot's question badly: run per
+finding it has no memory, so two OUT receivers and one healthy bench WR produced two cards each
+naming him — individually true, jointly impossible. `advisors/roster_plan.py` allocates once
+across all openings, most-constrained-first. → D-045
+
+IR is excluded from direct swaps (ESPN will not start a player out of an IR slot) and reported as
+`ir_candidates`, a prerequisite action. **A replacement whose own game has kicked off is not a
+replacement** — `find_replacements`/`find_ir_candidates` take an optional `now`, optional because
+`find_upcoming_byes` asks about *next* week. → D-076
+
+### The inactives sweep is the one check that is a matter of timing
+
+Every other finding is true all week. **QUESTIONABLE and DOUBTFUL are the exception** (D-010):
+most Questionable players play, so benching one on Wednesday loses points more often than it saves
+them — but ninety minutes before the slot locks, the inactives are out and the swap is still
+legal. So `at_risk` is the only opening whose **existence** depends on `now`. → D-075
+
+- **The window tracks the slot's lock, not the kickoff.** Under a weekly lock a Sunday starter
+  froze on Thursday.
+- **`RosterEntry.is_uncertain` treats an unrecognized status as doubt.** `HEALTHY` is a *closed*
+  list, so a designation ESPN adds costs one wasted alert rather than dropping a starter out of
+  the only check that runs while he is still swappable.
+- **It reports even when the bench cannot cover it** — a claim cannot process in ninety minutes
+  but a free agent can be added instantly, and `plan_fix` already says so.
+- **It sorts above `bye`** despite being less certain, because its slot freezes sooner.
+
+`assign_replacements` takes `priorities` (severity doubles as the value) as a tiebreak **after**
+most-constrained-first, so a certain zero beats a maybe for the same bench player without a
+one-option slot losing its only candidate.
+
+### The scheduler: everything checkable is checked
+
+`agent.py` builds the launchd plist and is pure; `cli.py` calls `launchctl`. R-2 says launchd
+correctness is untestable in CI — true of the *loading*, not of the plist, which is a function of
+two paths and an interval. A wrong plist is the worst outcome available: launchd will happily
+"run" it and fail silently every interval forever.
+
+**launchd, not cron** (D-022): cron skips a job it missed while the Mac was asleep. **A fixed
+interval, not one derived from kickoffs** (D-064).
+
+`build_agent` refuses more than it accepts, and every guard maps to a *silent* failure:
+
+- **absolute paths only** — launchd has no shell, no PATH, no working directory
+- **`league.yaml` / `espn.yaml` / `notify.yaml` must exist** — otherwise you are scheduling silence
+- **interval clamped to 5–240 minutes** — below hammers an unofficial API; above cannot catch a
+  Sunday inactives ruling before kickoff
+- **no `KeepAlive`** — it restarts the job the moment it exits: an infinite loop against ESPN
+- **`plistlib`, never a format string** — a directory named `Tom & Jerry` is ordinary
+
+Install does `bootout` then `bootstrap`. `--status` reports **loaded** *and* **whether anything
+has actually run** — R-2 is precisely the gap between those two facts.
+
+### One machine alerts, and the other one says so
+
+`host.py` answers "is this the machine that is supposed to be alerting?" Two machines alerting
+sends everything twice (alert history is a local SQLite file). Worse: **a laptop that checks even
+occasionally keeps the heartbeat green while the scheduler machine is face-down** — E3 defeated by
+its own mechanism. → D-072
+
+`scheduler_host` is **empty by default** (one machine is the common case); `schedule --install`
+records the host automatically. A non-scheduler run **still checks and still writes the page**; it
+only declines to send and to ping, and says so. Hostnames are normalised — macOS returns
+`MacBook-Air.local` on one network and `MacBook-Air` on another.
+
+### The dead-man's switch has two halves
+
+**Expired ESPN cookies produce no alert, which is indistinguishable from "nothing is wrong."** The
+better this product gets at staying quiet, the more dangerous its silence becomes. → D-023, D-063
+
+**On-host** (`watchdog.py`, pure, always active). Reads the run log *after* the line is written and
+trips on either signal: **three failed runs in a row** (the cookie case), or **no *successful* run
+within `max_silence_hours`** — measured from the last success, never the last run, since a machine
+erroring every fifteen minutes since Thursday is not alive. Escalating keys
+(`watchdog:failing:2`) mean one alert per severity step. `_watch` runs in a `finally` and swallows
+its own exceptions: it must never replace the real failure with a confusing one.
+
+**Off-host** (`notify/heartbeat.py`, optional). A process on a dead machine reports nothing about
+the machine being dead; the only construction that works is one where **absence is the signal**.
+Deliberately a bare URL, not an integration. `fail_url` is separate and **never** guessed by
+appending `/fail`, which is one vendor's convention. The heartbeat fires regardless of `--notify`
+— it is monitoring, not an alert. When unconfigured, `doctor` reports it as an **exposure**. Ping
+URLs are credentials and are redacted from the run log alongside the topic and the cookies.
+
+### Every run leaves a line
+
+`runlog.py` appends one JSON object per `ffcoach check` (D-041: JSONL, because the first reader is
+a person with `grep` at 9am on a Sunday). Nothing recorded anything before this, which is why **E3
+could not be built**: a dead-man's switch is the question *when did a run last succeed?* Three
+properties are load-bearing (D-062):
+
+- **The logging wraps the run in a `finally`**, not appended at the end — the runs worth
+  diagnosing are the ones that crash. `_run_check` is a thin wrapper; `_check_body` holds the logic.
+- **Secrets never reach it.** `RunLog` scrubs its `secrets` from every string at any depth; empty
+  and `None` are dropped, since scrubbing `""` would replace every gap between characters.
+- **A logging failure never takes down the check.** Write errors warn on stderr and the run
+  continues.
+
+`doctor` prints the last run **and**, when it failed, the last one that succeeded. A recent *run*
+proves the scheduler is alive; a recent *success* proves it would have told you something. A
+corrupt half-written line is skipped rather than allowed to blind every reader.
+
+### The health panel is built per request, and unknown is not healthy
+
+`GET /api/health` is composed **per request and never written to a file** — a panel served from a
+snapshot would report "last run 3 minutes ago" out of a file written three hours ago. **Unknown is
+its own state**: `agent_loaded` is `True`/`False`/`None`, and `None` renders as "could not be
+determined" rather than a green tick. Any unknown drags the overall state below OK; any bad beats
+any unknown. **No secret is ever in the payload** — only whether each is configured; a test
+asserts the generated topic and ping URL are both absent. `POST /api/refresh` is **POST only** (a
+GET with a side effect can be fired by an `<img>` tag) and rate-limited to one run per 30 seconds,
+answering **429**. → D-074
+
+### `ffcoach serve` is rooted at `web/`, and that is the point
+
+`espn.yaml` and `notify.yaml` live in the **project root, one directory above the pages**. So
+`web_root()` resolves and checks for `index.html` before a socket is opened, and **refuses rather
+than falling back** — the plausible fallback is exactly the directory holding the credentials.
+Five traversal shapes are tested against a real running server. → D-071
+
+`.json` is served `Cache-Control: no-store`; HTML is not. `--lan` binds every interface and **says
+what that means in the output**, not only in `--help`. Default is localhost.
+
+### Setup is a checklist, and both commands read the same one
+
+`_setup_steps()` returns `(done, what, how to fix it)` and is rendered by **both** `ffcoach init`
+and `ffcoach doctor`, so "what is missing" and "how do I fix it" cannot drift apart. → D-073
 
 ### Browser layer
 
-No framework, no build step, no npm packages shipped. The split is enforced:
+No framework, no build step, no npm packages shipped. The split is enforced: **if it computes, it
+lives in `render.js` / `league_render.js` / `week.js` and has a test. If it touches the DOM, it
+lives in `*_main.js` and stays trivial enough to read.**
 
-**If it computes, it lives in `render.js` / `league_render.js` and has a test. If it touches
-the DOM, it lives in `main.js` / `league_main.js` and stays trivial enough to read.**
+**Team logos are deliberately not shown** (D-070) — so nobody adds them again. A league's *default*
+logo is a public SVG, but a **user-uploaded** one lives on `mystique-api.fantasy.espn.com` and
+returns **401** to a plain `<img>`: the browser will not send ESPN's cookies on a cross-site
+subresource. So the teams who bothered to customise are exactly the ones whose image cannot load.
+`abbrev` carries the same identity in text, for every team.
 
-**Team logos are deliberately not shown, and this is why** — so nobody adds them again.
-A league's *default* logo is a public SVG on `g.espncdn.com`, but a **user-uploaded** one
-lives on `mystique-api.fantasy.espn.com` and returns **401** to a plain `<img>`: the
-browser will not send ESPN's cookies on a cross-site subresource. So the teams who
-bothered to customise are exactly the ones whose image cannot load — built, tried on the
-live league, and the two custom uploads were empty boxes. Showing logos for ten teams and
-initials for two looked like a bug rather than a design. `abbrev` carries the same
-identity in text, and does it for every team.
+`web/nav.js` holds one `PAGES` list driving the nav on every page (D-007). A test asserts
+**`index.html` is the Week page** — the front door was the draft board until 2026-09-04 (D-051).
 
-`web/nav.js` holds one `PAGES` list driving the nav on every page — adding a section is one
-entry, not per-page markup edits. A test fails if page names get hardcoded back into
-`navHtml`, and another asserts **`index.html` is the Week page**: the front door was the
-draft board until 2026-09-04, which meant the first thing the app showed was the one page
-the user had said he did not want (D-050, D-051). The board lives at `draft.html`.
-
-`week.js` **re-derives nothing.** `actionable`, `verb`, `status` and `blind_spots` all
-arrive from Python where they are tested; a second implementation in JavaScript of "can I
-still fix this?" would answer a slightly different question on every reload. `blindSpotsHtml`
-renders **above** the findings, never below — an empty findings list plus a caveat below the
-fold is exactly the false reassurance `CheckResult` exists to prevent.
+`week.js` **re-derives nothing** (D-066). `actionable`, `verb`, `status` and `blind_spots` all
+arrive from Python where they are tested. `blindSpotsHtml` renders **above** the findings, never
+below.
 
 ## Binding UX rules (enforced by tests, not just convention)
 
-These come from direct user feedback and have executable assertions behind them:
-
-1. **Standard terminology is never hidden or renamed.** The interface says "ADP", not
-   "Typical pick". Terms are *annotated*, never replaced —
-   `render.test.js` asserts ADP is never renamed away.
-2. **Explain mode annotates only.** Turning it on never changes layout or ordering, only
-   what is annotated. Default view assumes a seasoned player.
+1. **Standard terminology is never hidden or renamed.** The interface says "ADP", not "Typical
+   pick". Terms are *annotated*, never replaced. `render.test.js` asserts ADP is never renamed
+   away. → D-003
+2. **Explain mode annotates only.** Turning it on never changes layout or ordering. → D-004
 3. **No dollar figures.** The league uses waiver priority, not a bidding budget. Both
    `test_report.py` and `render.test.js` assert no `$` is ever emitted.
-4. **Every recommendation states its reason inline**, in both modes. No unexplained stars
-   or flags — see `advisors/draft.py::_reason`. Each clause must trace to something
-   *computed*: the board carries no bargain/reach verdict, because `rank` is the ADP sort
-   order, so `adp - rank` graded ADP against itself and drifted with list depth (a DEF at
-   ADP 196 on row 271 read "reach"). Grading market price needs an independent ranking,
-   and there is no projection model. `availability` — a normal CDF over FFC's `stdev` —
-   stays, because it is real.
-5. **Status is never carried by colour alone.** The injury badge is a letter plus a
-   `title`; `league_render.test.js` asserts both. A red dot is invisible to a screen reader
-   and to roughly one man in twelve.
+4. **Every recommendation states its reason inline**, in both modes. Each clause must trace to
+   something *computed* — which is why the board carries no bargain/reach verdict (D-052:
+   `rank` *is* the ADP sort order, so `adp - rank` graded ADP against itself). `availability`, a
+   normal CDF over FFC's `stdev`, stays because it is real.
+5. **Status is never carried by colour alone.** The injury badge is a letter plus a `title`;
+   `league_render.test.js` asserts both.
 
 ## Config
 
 - `league.yaml` — league settings. Gitignored; copy from `league.example.yaml`.
-- `notify.yaml` — where alerts go. Gitignored; copy from `notify.example.yaml`. The ntfy
-  topic name is a credential: a public topic has no auth, so it must be long and random.
+- `notify.yaml` — where alerts go. Gitignored; copy from `notify.example.yaml`. **The ntfy topic
+  name is a credential** (D-058).
 - `espn.yaml` — ESPN `espn_s2` / `SWID` session cookies. Gitignored; copy from
-  `espn.example.yaml`. Kept **separate** from `league.yaml` so that file stays safe to share
-  or screenshot. These cookies authenticate as the user; there is no documented expiry and
-  no refresh endpoint, so `EspnAuthError` (401/403) is raised distinctly and deliberately
-  does **not** fall back to stale cache.
+  `espn.example.yaml`. Kept **separate** from `league.yaml` so that file stays safe to share or
+  screenshot. These cookies authenticate as the user; there is no documented expiry and no refresh
+  endpoint, so `EspnAuthError` (401/403) is raised distinctly and deliberately does **not** fall
+  back to stale cache.
 
-Nothing about league format may be hardcoded — scoring, roster slots, team count,
-waiver system, **and the league's timezone** all come from config.
+**Nothing about league format may be hardcoded** — scoring, roster slots, team count, waiver
+system, **and the league's timezone** all come from config. ESPN publishes `waiverProcessHour` as a
+bare integer with **no timezone field anywhere in the payload**, so an unknown zone is refused
+rather than defaulted, and an unreadable config is recorded as a **blind spot**. → D-065
 
-That last one was a hardcoded constant until 2026-09-04 and is worth the paragraph.
-ESPN reports `acquisitionSettings.waiverProcessHour` as a **bare integer with no
-timezone field anywhere in the payload** — the whole document was searched to confirm
-it. So 11:00 Eastern and 11:00 Pacific are equally valid readings of the same number,
-three hours apart, on a deadline this tool states as fact. `league.yaml` carries
-`timezone:`, an unknown zone is refused rather than defaulted (a typo silently becoming
-Eastern would leave the user believing a value they set), and when the config cannot be
-read at all the fallback is recorded as a **blind spot** so an assumption never passes
-as knowledge.
-
-**The live league, read from ESPN on 2026-09-03** (league `1076479097`). Recorded here
-because every fixture and every default should be checked against it, not against a
-guess:
+**The live league, read from ESPN on 2026-09-03** (league `1076479097`). Every fixture and default
+should be checked against this, not against a guess:
 
 | | |
 |---|---|
@@ -624,51 +428,45 @@ guess:
 | Bench | BN 7 · **IR 1** (`config.py`'s `VALID_SLOTS` has no IR — nothing is drafted into it) |
 | Waivers | Priority, **no budget**. Processes **six days a week at 11:00** — every day but Tuesday. 24h claim window |
 | Lineup lock | `INDIVIDUAL_GAME` → per-player, at each player's kickoff |
-| Timezone | **Eastern**, confirmed by the user against ESPN's own UI on 2026-09-04. ESPN itself publishes none |
+| Timezone | **Eastern**, confirmed by the user against ESPN's own UI on 2026-09-04 |
 
-`my_pick` in `league.yaml` fed only the legacy draft board, and ESPN cannot supply it
-anyway: `draftSettings.orderType` is `DRAFT_START`, so the order is drawn when the draft
-opens and the published `pickOrder` is the identity list `[1..12]`, a placeholder.
+`my_pick` fed only the legacy draft board, and ESPN cannot supply it: `draftSettings.orderType` is
+`DRAFT_START`, so the published `pickOrder` is the identity list `[1..12]`, a placeholder.
 
 **One knowing exception**, recorded rather than hidden: `_SLOT_ELIGIBILITY` in
-`advisors/lineup.py` hardcodes `FLEX = RB/WR/TE`, so superflex and IDP leagues would be
-silently wrong. The slot *names* still come from ESPN, and an unrecognized slot falls
-through to "only its own position fits" — conservative rather than fabricated. It is a
-portability defect, not a live one, and it is the first thing to fix if this repo is ever
-pointed at a second league.
+`advisors/lineup.py` hardcodes `FLEX = RB/WR/TE`, so superflex and IDP leagues would be silently
+wrong. Slot *names* still come from ESPN, and an unrecognized slot falls through to "only its own
+position fits" — conservative rather than fabricated. A portability defect, not a live one, and
+the first thing to fix if this repo is ever pointed at a second league. → D-038
 
 ## Testing
 
-Every module ships with tests, including browser code.
+Every module ships with tests, including browser code. Sources are tested against committed
+fixtures with a mocked `httpx.MockTransport`, so the suite is deterministic and offline. See the
+`client_returning()` helper duplicated across source tests.
 
-**`tests/conftest.py` chdirs every test into a scratch directory**, and that is not
-tidiness. `--log`, `--notify-config` and `--cache` all default to paths relative to the
-working directory, so any test not overriding all three read and wrote the developer's
-real files: 463 test records had accumulated in the actual run log, and `_watch` was
-loading the real `notify.yaml` on every check test — with a heartbeat URL configured
-there, the suite would have been pinging a live monitoring service and faking a healthy
-machine. Chdir-per-test rather than per-call-site fixes, because the defaults are the
-point of those options and the next test written will forget again. Sources are tested against committed
-fixtures with a mocked `httpx.MockTransport`, so the suite is deterministic and offline.
-See the `client_returning()` helper duplicated across source tests.
+**`tests/conftest.py` chdirs every test into a scratch directory**, and that is not tidiness.
+`--log`, `--notify-config` and `--cache` all default to paths relative to the working directory, so
+any test not overriding all three read and wrote the developer's real files: 463 test records had
+accumulated in the actual run log, and `_watch` was loading the real `notify.yaml` on every check
+test — with a heartbeat URL configured there, the suite would have been pinging a live monitoring
+service and faking a healthy machine. Chdir-per-test rather than per-call-site fixes, because the
+defaults are the point of those options and the next test written will forget again.
 
-**When a fixture and the code agree, they can be wrong together.** Twice now the
-hand-built ESPN fixture encoded the same wrong assumption as the parser, so a green suite
-proved only that they matched each other. Check a *new* field against a live response, not
-against the fixture.
+**When a fixture and the code agree, they can be wrong together.** Twice now the hand-built ESPN
+fixture encoded the same wrong assumption as the parser, so a green suite proved only that they
+matched each other. **Check a *new* field against a live response, not against the fixture.**
 
-`tests/fixtures/espn_league.json` is **hand-built**, but as of 2026-09-03 the parser it
-exercises is no longer unverified: `ffcoach league` ran against the real league and
-returned 12 teams with **zero diagnostics**, so the field names guessed from community
-docs match live ESPN. The fixture is still only two teams and still proves internal
-consistency rather than fidelity — replacing it with a real cookie-scrubbed capture is
-worth doing, and **`SWID` is both the owner id in `members[]` and half the auth pair**,
-so any capture tool must scrub member ids, not just display names.
+`tests/fixtures/espn_league.json` is hand-built, but the parser is no longer unverified: `ffcoach
+league` ran against the real league and returned 12 teams with **zero diagnostics**. It is still
+only two teams. Replacing it with a real cookie-scrubbed capture is worth doing — and **`SWID` is
+both the owner id in `members[]` and half the auth pair**, so any capture tool must scrub member
+ids, not just display names.
 
 ## Workflow
 
-Feature branches with PRs into `main` — never a direct merge. CI (`.github/workflows/test.yml`)
-runs both suites on every PR.
+Feature branches with PRs into `main` — **never a direct merge** (D-039). CI
+(`.github/workflows/test.yml`) runs both suites on every PR.
 
-Design docs live in `docs/superpowers/specs/`; the spec records phasing and deliberately
-deferred work (smack talk, per-alert notification toggles) with rationale.
+`ROADMAP.md` is the planning board: §1 status, §3 registry, **§6 the decision log** (the `D-NNN`
+references throughout this file), §7 roadblocks. Design docs live in `docs/superpowers/specs/`.
