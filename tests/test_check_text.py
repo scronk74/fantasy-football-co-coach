@@ -151,3 +151,24 @@ def test_a_pre_draft_run_explains_itself_rather_than_claiming_all_clear():
     out = text(result(pre_draft=True))
     assert "Draft has not happened yet" in out
     assert "All clear" not in out
+
+
+def test_an_at_risk_finding_is_labelled_as_doubt_not_as_certainty():
+    """The label is this tool's read; the reason carries ESPN's own word.
+
+    Printing "QUESTIONABLE" as the label would put ESPN's designation in the
+    column that everywhere else holds a conclusion, and the two are not the
+    same claim.
+    """
+    lines = text(
+        result(
+            findings=[
+                finding(
+                    kind="at_risk",
+                    reason="Still listed Questionable and his slot locks shortly.",
+                )
+            ]
+        )
+    )
+    assert "RISK" in lines
+    assert "Still listed Questionable" in lines

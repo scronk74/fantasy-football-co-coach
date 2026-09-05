@@ -290,3 +290,33 @@ def test_an_unknown_draft_state_does_not_silence_the_checks(schedule, week):
     assert lg.draft_completed is None
     result = build_check(lg, schedule, espn_week(week), EARLY, LIVE)
     assert result.status == "problems"
+
+
+# --- E6: the sweep as the whole run sees it ------------------------------
+
+
+def test_a_questionable_starter_is_not_a_problem_early_in_the_week(schedule, week):
+    """The week's status must not turn on doubt the user cannot yet resolve."""
+    mine = team("Mine", True, entry("Maybe Playing", "WR", "KC", injury="QUESTIONABLE"))
+    result = build_check(league(mine), schedule, espn_week(week), EARLY, LIVE)
+    assert result.status == "all_clear"
+    assert result.findings == []
+
+
+def test_the_same_starter_is_a_problem_ninety_minutes_before_his_lock(
+    schedule, week
+):
+    """The alert D-026 called the highest-value one this product sends."""
+    mine = team(
+        "Mine",
+        True,
+        entry("Maybe Playing", "WR", "KC", injury="QUESTIONABLE"),
+        entry("Backup", "WR", "KC", slot="BN"),
+    )
+    now = schedule.kickoff("KC", week) - dt.timedelta(minutes=45)
+    result = build_check(league(mine), schedule, espn_week(week), now, LIVE)
+
+    assert result.status == "problems"
+    assert [f.kind for f in result.findings] == ["at_risk"]
+    # And it is still fixable, which is the entire point of the window.
+    assert [f.player_name for f in result.actionable] == ["Maybe Playing"]

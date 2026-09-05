@@ -67,3 +67,52 @@ def test_no_openings_is_not_an_error():
 def test_assignment_is_deterministic():
     args = [("X", "Y"), ("Y", "Z"), ("X", "Z")]
     assert assign_replacements(args) == assign_replacements(args)
+
+
+# --- certainty breaks ties (E6) ------------------------------------------
+
+
+def test_a_tie_goes_to_the_more_certain_problem():
+    """A definite zero beats a maybe for the last usable bench player.
+
+    Before the inactives sweep every opening was a certain zero, so the tie
+    fell to input order -- arbitrary, but never wrong. With `at_risk` in the
+    mix it would be wrong: benching a Questionable starter who then plays
+    costs points, leaving an OUT starter in the lineup guarantees losing them.
+    """
+    out, at_risk = assign_replacements(
+        [("Solo RB",), ("Solo RB",)], priorities=[0, 1]
+    )
+    assert out.assigned == "Solo RB"
+    assert at_risk.assigned is None
+
+
+def test_certainty_does_not_override_being_the_only_option():
+    """Constraint still comes first, and that is what serves both openings.
+
+    The certain zero has two candidates and the doubtful one has a single
+    candidate they share. Priority-first would hand the shared player to the
+    certain zero and leave the other opening empty; most-constrained-first
+    gives each of them somebody.
+    """
+    certain, doubtful = assign_replacements(
+        [("Shared", "Spare"), ("Shared",)], priorities=[0, 1]
+    )
+    assert doubtful.assigned == "Shared"
+    assert certain.assigned == "Spare"
+
+
+def test_priorities_are_optional_and_default_to_equal():
+    with_none = assign_replacements([("A",), ("A",), ("B", "A")])
+    with_flat = assign_replacements([("A",), ("A",), ("B", "A")], priorities=[0, 0, 0])
+    assert with_none == with_flat
+
+
+def test_a_priority_list_of_the_wrong_length_is_refused():
+    """Silently zipping short would give later openings an unstated priority."""
+    try:
+        assign_replacements([("A",), ("B",)], priorities=[0])
+    except ValueError as exc:
+        assert "one per opening" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")

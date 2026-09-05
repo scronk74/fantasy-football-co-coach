@@ -13,6 +13,12 @@ bench player is healthy and actually plays this week"*, never *"this bench
 player will score more"*. The latter needs projections and belongs to a later
 phase.
 
+**One finding is not a fact but a decision point.** `at_risk` (E6) reports a
+starter ESPN still lists as Questionable or Doubtful, and only in the ninety
+minutes before his slot locks. It is the single exception to the paragraph
+above: it does not claim he will score zero, it claims the question is now
+answerable and about to stop being fixable. See `_at_risk_openings`.
+
 Two responsibilities that used to live here have moved out, because both were
 being decided per-finding when they are properly decided per-roster or
 per-model: who covers which opening is now `advisors/roster_plan.py`, and what
@@ -52,12 +58,26 @@ _SLOT_ELIGIBILITY: dict[str, tuple[str, ...]] = {
 # Lower sorts first. A bye is knowable days ahead; an OUT ruling often is not,
 # so it is the more urgent surprise. An empty slot ranks with OUT: both are a
 # certain zero in a slot that is still changeable.
-_SEVERITY = {"empty_slot": 0, "out": 0, "bye": 1, "bye_next_week": 2}
+#
+# `at_risk` sorts above `bye` despite being the less certain of the two, and
+# the reason is time rather than certainty: it is only ever emitted inside the
+# window before its slot freezes, while a bye starter's slot stays changeable
+# until the week's last kickoff. Ordering by severity here agrees with ordering
+# by deadline, which is what the user actually acts on.
+_SEVERITY = {"empty_slot": 0, "out": 0, "at_risk": 1, "bye": 2, "bye_next_week": 3}
+
+# How long before a slot locks the inactives sweep starts caring (D-026). The
+# NFL publishes official inactives 90 minutes before kickoff, so this is the
+# first moment the question "is he playing?" has a real answer, and the last
+# stretch in which the swap is still legal. The scheduler's 30-minute interval
+# (D-064) fits inside it two or three times over, so no window is ever missed
+# between runs.
+INACTIVES_WINDOW = dt.timedelta(minutes=90)
 
 
 @dataclass(frozen=True)
 class LineupFinding:
-    kind: str  # "empty_slot" | "out" | "bye" | "bye_next_week"
+    kind: str  # "empty_slot" | "out" | "at_risk" | "bye" | "bye_next_week"
     player_name: str
     position: str
     lineup_slot: str
@@ -189,6 +209,14 @@ def _reason(
         head = f"{player.nfl_team} is on bye next week"
     elif kind == "bye":
         head = f"{player.nfl_team} is on bye"
+    elif kind == "at_risk":
+        # Names the raw status rather than paraphrasing it, and says where the
+        # answer is. This tool does not read the inactives report -- nothing
+        # here fetches one -- so the honest finding tells the user what ESPN
+        # still says and points at the source that settles it, instead of
+        # implying we know he is out.
+        status = (player.injury_status or "").replace("_", " ").title()
+        head = f"Still listed {status} with his slot about to lock"
     else:
         status = (player.injury_status or "OUT").replace("_", " ").title()
         head = f"Listed {status}"
@@ -213,18 +241,54 @@ def _reason(
     return f"{head}, {tail}. Claim someone."
 
 
+def _has_played(
+    schedule: Schedule,
+    team_abbrev: str,
+    week: int,
+    now: dt.datetime | None,
+    lock: LineupLock,
+) -> bool:
+    """Whether this player's own game has already started.
+
+    Naming a bench player whose game kicked off two hours ago is advice the
+    site will refuse. It stayed invisible while every check ran days ahead:
+    `plan_fix` takes the earliest of the replacements' locks, so the *deadline*
+    was already right and the finding merely went unactionable. The inactives
+    sweep is the first check that runs while games are in progress, and there
+    the difference is the whole answer -- a Sunday-afternoon backup is not a
+    fix for a Monday-night starter, and reporting him as one turns a finding
+    the user could still act on (add a free agent) into one that reads as too
+    late.
+    """
+    if now is None:
+        return False
+    locks_at = lock_time(schedule, team_abbrev, week, lock)
+    return locks_at is not None and locks_at <= now
+
+
 def find_replacements(
-    team: Team, slot: str, schedule: Schedule, week: int
+    team: Team,
+    slot: str,
+    schedule: Schedule,
+    week: int,
+    now: dt.datetime | None = None,
+    lock: LineupLock | None = None,
 ) -> tuple[str, ...]:
     """Bench players who fit the slot, are healthy, and actually play.
 
     No projections involved -- purely "can this person score at all".
+
+    Pass `now` to also drop those whose own game has already kicked off. It is
+    optional because the question is only meaningful for a week in progress:
+    `find_upcoming_byes` asks about *next* week, where this week's clock says
+    nothing.
 
     IR is excluded even when its occupant is healthy: ESPN does not allow a
     player to be started out of an IR slot, so offering him as a direct swap
     describes a move the site will refuse. `find_ir_candidates` reports him
     separately.
     """
+    lock = lock or _DEFAULT_LOCK
     out: list[str] = []
     for entry in team.roster:
         if entry.is_starter or entry.lineup_slot == IR_SLOT:
@@ -235,19 +299,28 @@ def find_replacements(
             continue
         if schedule.status(entry.nfl_team, week) != "playing":
             continue
+        if _has_played(schedule, entry.nfl_team, week, now, lock):
+            continue
         out.append(entry.player_name)
     return tuple(out)
 
 
 def find_ir_candidates(
-    team: Team, slot: str, schedule: Schedule, week: int
+    team: Team,
+    slot: str,
+    schedule: Schedule,
+    week: int,
+    now: dt.datetime | None = None,
+    lock: LineupLock | None = None,
 ) -> tuple[str, ...]:
     """Healthy IR occupants who fit the slot once activated.
 
     Rare but real: a player returns, ESPN keeps him in the IR slot until you
     move him, and he is a legitimate fix that costs an extra step (and, if the
-    roster is full, a drop).
+    roster is full, a drop). Held to the same clock as a bench swap: activating
+    someone whose game has kicked off buys nothing.
     """
+    lock = lock or _DEFAULT_LOCK
     return tuple(
         e.player_name
         for e in team.roster
@@ -255,6 +328,7 @@ def find_ir_candidates(
         and _eligible(slot, e.position)
         and not e.is_certainly_out
         and schedule.status(e.nfl_team, week) == "playing"
+        and not _has_played(schedule, e.nfl_team, week, now, lock)
     )
 
 
@@ -278,6 +352,7 @@ def _empty_openings(
     schedule: Schedule,
     week: int,
     lock: LineupLock,
+    now: dt.datetime | None = None,
 ) -> list[_Opening]:
     """Starting slots the league requires that hold no player.
 
@@ -307,8 +382,12 @@ def _empty_openings(
                     kind="empty_slot",
                     slot=slot,
                     entry=None,
-                    candidates=find_replacements(team, slot, schedule, week),
-                    ir_candidates=find_ir_candidates(team, slot, schedule, week),
+                    candidates=find_replacements(
+                        team, slot, schedule, week, now, lock
+                    ),
+                    ir_candidates=find_ir_candidates(
+                        team, slot, schedule, week, now, lock
+                    ),
                     kickoff=None,
                     locks_at=locks_at,
                     lock_is_estimated=estimated,
@@ -318,7 +397,11 @@ def _empty_openings(
 
 
 def _broken_openings(
-    team: Team, schedule: Schedule, week: int, lock: LineupLock
+    team: Team,
+    schedule: Schedule,
+    week: int,
+    lock: LineupLock,
+    now: dt.datetime | None = None,
 ) -> list[_Opening]:
     """Filled starting slots whose occupant cannot score."""
     openings: list[_Opening] = []
@@ -340,8 +423,77 @@ def _broken_openings(
                 kind=kind,
                 slot=entry.lineup_slot,
                 entry=entry,
-                candidates=find_replacements(team, entry.lineup_slot, schedule, week),
-                ir_candidates=find_ir_candidates(team, entry.lineup_slot, schedule, week),
+                candidates=find_replacements(
+                    team, entry.lineup_slot, schedule, week, now, lock
+                ),
+                ir_candidates=find_ir_candidates(
+                    team, entry.lineup_slot, schedule, week, now, lock
+                ),
+                kickoff=schedule.kickoff(entry.nfl_team, week),
+                locks_at=locks_at,
+                lock_is_estimated=estimated,
+            )
+        )
+    return openings
+
+
+def _at_risk_openings(
+    team: Team,
+    schedule: Schedule,
+    week: int,
+    now: dt.datetime,
+    lock: LineupLock,
+    window: dt.timedelta,
+) -> list[_Opening]:
+    """Starters whose status is unresolved and whose slot is about to freeze.
+
+    **The one check on this roster that is a matter of timing rather than
+    fact.** Every other finding here is true all week: a bye is a bye on
+    Tuesday, an OUT ruling stays out. "Questionable" is different -- it is not
+    a problem when you first see it, because most Questionable players play,
+    and benching one on Wednesday costs points more often than it saves them.
+    It becomes a problem in the last ninety minutes, when the league has
+    published its inactives, the answer exists, and the swap is still legal
+    (D-026).
+
+    So this is the only opening type that takes `now` as an input to *whether
+    it exists at all*, not merely to whether it is still actionable.
+
+    Three boundaries worth stating:
+
+    * **The window tracks the slot's lock, not the kickoff.** Under a weekly
+      lineup lock a Sunday starter froze on Thursday, so ninety minutes before
+      his own game is ninety minutes too late to tell anyone. `slot_lock`
+      already resolves that difference and is the only thing consulted here.
+    * **A player already on bye or ruled out is not at risk, he is broken.**
+      Those are certain zeros with their own findings, and a starter must not
+      appear twice.
+    * **A slot that has already locked produces nothing.** The window is a
+      half-open interval ending at the lock, so a passed deadline is excluded
+      here rather than reported and then filtered.
+    """
+    openings: list[_Opening] = []
+    for entry in team.roster:
+        if not entry.is_starter or not entry.is_uncertain:
+            continue
+        if entry.is_certainly_out or schedule.status(entry.nfl_team, week) == "bye":
+            continue
+
+        locks_at, estimated = slot_lock(schedule, entry.nfl_team, week, lock)
+        if locks_at is None or not (now < locks_at <= now + window):
+            continue
+
+        openings.append(
+            _Opening(
+                kind="at_risk",
+                slot=entry.lineup_slot,
+                entry=entry,
+                candidates=find_replacements(
+                    team, entry.lineup_slot, schedule, week, now, lock
+                ),
+                ir_candidates=find_ir_candidates(
+                    team, entry.lineup_slot, schedule, week, now, lock
+                ),
                 kickoff=schedule.kickoff(entry.nfl_team, week),
                 locks_at=locks_at,
                 lock_is_estimated=estimated,
@@ -410,7 +562,7 @@ def find_empty_slots(
     one that needs an acquisition -- never two findings naming the same man.
     """
     lock = lock or _DEFAULT_LOCK
-    openings = _empty_openings(team, required_slots, schedule, week, lock)
+    openings = _empty_openings(team, required_slots, schedule, week, lock, now)
     assignments = assign_replacements([o.candidates for o in openings])
     return _to_findings(
         openings, assignments, team, schedule, week, lock, waiver_deadline, now
@@ -472,6 +624,7 @@ def find_problems(
     waiver_deadline: dt.datetime | None = None,
     look_ahead: bool = False,
     lock: LineupLock | None = None,
+    window: dt.timedelta = INACTIVES_WINDOW,
 ) -> list[LineupFinding]:
     """Starters who cannot score this week, most urgent first.
 
@@ -482,20 +635,34 @@ def find_problems(
     know how many starters the league requires, and inventing a number would
     manufacture findings or, worse, false silence.
 
-    Empty slots and broken starters compete for the same bench, so they are
-    collected first and allocated together. Findings whose slot has already
-    locked are still returned, flagged `locked`, so callers can report them
-    without alerting. Silently dropping them would make a missed player
-    indistinguishable from a clean lineup.
+    Empty slots, broken starters and at-risk starters compete for the same
+    bench, so they are collected first and allocated together. Findings whose
+    slot has already locked are still returned, flagged `locked`, so callers
+    can report them without alerting. Silently dropping them would make a
+    missed player indistinguishable from a clean lineup.
+
+    `window` is how long before a slot locks the inactives sweep starts caring.
+    Passing zero disables it, which is what a caller wants when it is asking
+    "what is broken about this roster" rather than "what must I decide in the
+    next hour".
     """
     lock = lock or _DEFAULT_LOCK
 
     openings: list[_Opening] = []
     if required_slots:
-        openings.extend(_empty_openings(team, required_slots, schedule, week, lock))
-    openings.extend(_broken_openings(team, schedule, week, lock))
+        openings.extend(
+            _empty_openings(team, required_slots, schedule, week, lock, now)
+        )
+    openings.extend(_broken_openings(team, schedule, week, lock, now))
+    openings.extend(_at_risk_openings(team, schedule, week, now, lock, window))
 
-    assignments = assign_replacements([o.candidates for o in openings])
+    # Severity doubles as the allocation tiebreak. When a certain zero and a
+    # merely-doubtful starter want the same last bench player, the certain zero
+    # gets him -- see `assign_replacements`.
+    assignments = assign_replacements(
+        [o.candidates for o in openings],
+        [_SEVERITY.get(o.kind, 9) for o in openings],
+    )
     findings = _to_findings(
         openings, assignments, team, schedule, week, lock, waiver_deadline, now
     )

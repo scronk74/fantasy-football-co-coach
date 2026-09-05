@@ -29,6 +29,15 @@ UNKNOWN = "UNKNOWN"
 # not this one's.
 CERTAIN_OUT = ("OUT", "INJURY_RESERVE", "SUSPENSION", "IR")
 
+# Statuses that guarantee nothing is wrong. Everything ESPN has been observed
+# to send for a fit player -- and, importantly, this list is *closed*: a status
+# outside both this set and CERTAIN_OUT counts as uncertain rather than
+# healthy. That direction is chosen deliberately. ESPN renaming or adding a
+# designation should make the sweep look at a player it need not have, which
+# costs one alert; the other default would silently drop a starter from the one
+# check that runs while he is still swappable.
+HEALTHY = ("ACTIVE", "NORMAL", "PROBABLE")
+
 
 @dataclass(frozen=True)
 class RosterEntry:
@@ -47,6 +56,27 @@ class RosterEntry:
         if not self.injury_status:
             return False
         return self.injury_status.strip().upper() in CERTAIN_OUT
+
+    @property
+    def is_uncertain(self) -> bool:
+        """Might not play, and nothing here can settle it.
+
+        The inactives sweep's input (E6). Distinct from `is_certainly_out` on
+        purpose: a Questionable starter is not a finding on Wednesday, because
+        acting then means benching someone who will probably play. He becomes
+        one ninety minutes before his slot locks, when the official inactives
+        report exists and the swap is still legal. Same fact, different value,
+        and the difference is entirely the clock -- which is why the window
+        lives in the advisor and only the classification lives here.
+
+        No status at all is healthy: ESPN sends `injuryStatus` only for players
+        who have one, so absence is the common case by a wide margin and
+        treating it as doubt would flag an entire roster.
+        """
+        status = (self.injury_status or "").strip().upper()
+        if not status:
+            return False
+        return status not in CERTAIN_OUT and status not in HEALTHY
 
 
 @dataclass(frozen=True)

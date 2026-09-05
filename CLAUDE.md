@@ -204,6 +204,53 @@ Exit codes, because the check runs unattended long before anyone reads its outpu
 `0` all clear · `1` could not run · `2` still actionable · `3` not a clean look.
 `--now` refuses a naive instant rather than reading it as UTC and moving every deadline.
 
+### The inactives sweep is the one check that is a matter of timing
+
+Every other finding is true all week: a bye is a bye on Tuesday, an OUT ruling
+stays out. **QUESTIONABLE and DOUBTFUL are the exception, and D-010 deliberately
+kept them out of `is_certainly_out`** — most Questionable players play, so
+benching one on Wednesday loses points more often than it saves them. That left
+them producing no finding at all, which is right for six days and wrong for the
+last ninety minutes, when the NFL has published its inactives, the answer
+exists, and the swap is still legal.
+
+So `at_risk` (`_at_risk_openings`) is the only opening whose *existence* depends
+on `now`, not merely its actionability. Four properties are load-bearing:
+
+- **The window tracks the slot's lock, not the kickoff.** Under a weekly lineup
+  lock a Sunday starter froze on Thursday, so ninety minutes before his own game
+  is ninety minutes too late to tell anyone. `slot_lock` already resolves that
+  and is the only thing consulted.
+- **`RosterEntry.is_uncertain` treats an unrecognized status as doubt.**
+  `HEALTHY` is a closed list, so a designation ESPN adds or renames makes the
+  sweep look at a player it need not have — one wasted alert — rather than
+  dropping a starter out of the only check that runs while he is still
+  swappable. ESPN has renamed fields under this project twice.
+- **It reports even when the bench cannot cover it.** A waiver claim cannot
+  process inside ninety minutes, but an ESPN free agent can be added instantly,
+  so a real action remains. `plan_fix` already emits `ADD_BEFORE_LOCK` saying
+  exactly that, which is why this needs no special case — and silence here would
+  be indistinguishable from a healthy lineup.
+- **A certain zero outranks a maybe for the same bench player.**
+  `assign_replacements` now takes `priorities` (severity doubles as the value)
+  as a tiebreak *after* most-constrained-first. Constraint still comes first,
+  because a slot with one option must get it; certainty only decides a genuine
+  collision, which before E6 could not happen.
+
+`at_risk` sorts above `bye` despite being less certain, and the reason is time:
+it is only ever emitted inside the window before its slot freezes, while a bye
+starter's slot stays changeable until the week's *last* kickoff. Severity
+ordering and deadline ordering agree.
+
+**A replacement whose own game has kicked off is not a replacement.** Found by a
+test while building the sweep, and invisible until a check ran mid-week:
+`find_replacements` and `find_ir_candidates` now take an optional `now`.
+`plan_fix` already took the earliest of the replacements' locks, so the
+*deadline* was right and the finding merely went unactionable — which turned a
+problem the user could still fix (add a free agent) into one that read as too
+late. The parameter is optional because `find_upcoming_byes` asks about *next*
+week, where this week's clock says nothing.
+
 ### Delivery: silence is the common case, and it has to be deliberate
 
 `notify/` is three small files: `base.py` (the `Notification` + `Notifier`

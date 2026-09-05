@@ -169,3 +169,16 @@ def test_no_dollar_sign_reaches_a_phone():
         result(findings=[f], actionable=[f], blind_spots=("x",)), ET
     )
     assert "$" not in note.title + note.body
+
+
+def test_an_at_risk_finding_reaches_the_phone_as_its_own_kind():
+    """The alert E6 exists for: a decision, ninety minutes before the lock."""
+    note = notification_for(
+        result(
+            findings=[finding(kind="at_risk")],
+            actionable=[finding(kind="at_risk")],
+        ),
+        ET,
+    )
+    assert "RISK" in note.body
+    assert note.tier == "interrupt"

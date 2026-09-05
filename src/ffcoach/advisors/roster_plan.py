@@ -16,8 +16,16 @@ they have. A league starting RB and FLEX with one healthy bench RB and one
 healthy bench WR should send the RB to the RB slot; served in roster order the
 RB slot might get nothing while FLEX -- which the WR could have filled -- takes
 him. Ordering by candidate count gets that right without a full matching
-solver, and ties break on the caller's original order so the output is
-deterministic.
+solver.
+
+**Ties break on certainty, then on input order.** Constraint still comes first,
+because a slot with one option must get it. But equally-constrained openings
+are not equally important: a starter who is definitely out scores zero, and one
+who is merely Questionable probably plays. When both want the same last bench
+player, the certain zero takes him. Before E6 every opening was a certain zero
+and the tie fell to whichever the caller happened to list first, which was
+arbitrary rather than wrong -- so `priorities` defaults to equal and this
+degrades exactly to the old behaviour.
 
 Pure module: no I/O, no clock.
 """
@@ -48,16 +56,26 @@ class Assignment:
 
 def assign_replacements(
     candidates_per_opening: list[tuple[str, ...]],
+    priorities: list[int] | None = None,
 ) -> list[Assignment]:
     """Reserve at most one candidate per opening; returns results in input order.
 
     Takes each opening's eligible-candidate list rather than the roster, so the
     eligibility rules stay in the advisor and this stays a pure allocation
     problem.
+
+    `priorities` is the tiebreak, lower served first, and means only "which of
+    these matters more" -- this module deliberately does not know what a bye or
+    an injury is. Omit it and every opening ranks equal.
     """
+    if priorities is None:
+        priorities = [0] * len(candidates_per_opening)
+    if len(priorities) != len(candidates_per_opening):
+        raise ValueError("priorities must be one per opening")
+
     order = sorted(
         range(len(candidates_per_opening)),
-        key=lambda i: (len(candidates_per_opening[i]), i),
+        key=lambda i: (len(candidates_per_opening[i]), priorities[i], i),
     )
 
     taken: dict[int, str] = {}

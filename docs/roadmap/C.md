@@ -21,7 +21,7 @@ also found missing: the advisor this stage built has no production caller.
 Shipped in `src/ffcoach/advisors/lineup.py`. 32 tests.
 
 Notable behaviors, each deliberate:
-- QUESTIONABLE and DOUBTFUL are **not** treated as out (D-010) — that is E6's job.
+- QUESTIONABLE and DOUBTFUL are **not** treated as out (D-010) — that is E6's job, and as of 2026-09-04 it is done: `at_risk`, emitted only inside the 90 minutes before the slot locks (D-075).
 - Findings past kickoff are returned flagged `locked` rather than dropped (D-011).
 - Replacements are named on availability only — *"is healthy and plays this week"*, never
   *"will score more"*. The latter needs G2.

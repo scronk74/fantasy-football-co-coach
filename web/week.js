@@ -11,6 +11,10 @@ import { escapeHtml } from "./render.js";
 const KIND_LABEL = {
   empty_slot: "Empty",
   out: "Out",
+  // "At risk", not "Questionable". The chip is this tool's read; the player's
+  // own ESPN designation is spelled out in the reason line below it, so the
+  // two are never confused for each other.
+  at_risk: "At risk",
   bye: "Bye",
   bye_next_week: "Bye next week",
 };
