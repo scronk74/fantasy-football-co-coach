@@ -232,5 +232,9 @@ espn.yaml
 # the ntfy topic name IS the credential — a public topic has no auth at all
 notify.yaml
 
+# your alert preferences. No credential in here (that is the point of it being
+# a separate file from notify.yaml), but it is yours, not a template.
+alerts.yaml
+
 # visual brainstorming scratch
 .superpowers/

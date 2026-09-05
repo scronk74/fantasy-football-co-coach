@@ -1564,3 +1564,117 @@ def test_no_claim_leaves_the_host_alone(tmp_path, on_macos):
         cli._launchctl, cli.agent_plist_path = original_lc, original_path
 
     assert load_notify_config(Path.cwd() / "notify.yaml").scheduler_host == ""
+
+
+# --- D4: the preferences reach the delivery path -------------------------
+
+
+def _prefs_file(tmp_path, text):
+    path = tmp_path / "alerts.yaml"
+    path.write_text(text)
+    return str(path)
+
+
+def test_a_switched_off_kind_is_held_and_says_so(checkable, tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    code = run_check(
+        checkable, "--notify", "--dry-run", "--notify-config", str(conf),
+        "--alerts-config", _prefs_file(tmp_path, "kinds:\n  bye: off\n  out: off\n"),
+    )
+    out = capsys.readouterr().out
+    assert "switched off" in out
+    # Still found, still reported, still exit 2 -- only the sending changed.
+    assert code == 2
+
+
+def test_a_mute_holds_everything_without_hiding_the_findings(checkable, tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    code = run_check(
+        checkable, "--notify", "--dry-run", "--notify-config", str(conf),
+        "--alerts-config", _prefs_file(tmp_path, 'mute_until: "2025-12-01T00:00-05:00"\n'),
+    )
+    out = capsys.readouterr().out
+    assert "muted until" in out
+    assert "Nothing to send" in out
+    # The exit code still says there is work to do: a mute silences the phone,
+    # not the check.
+    assert code == 2
+
+
+def test_quiet_hours_come_from_the_file_not_from_a_constant(checkable, tmp_path, capsys):
+    """`--now` here is 09:00 ET, outside the default 23-08 window. A file that
+    moves the window over it must hold the alert."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    run_check(
+        checkable, "--notify", "--dry-run", "--notify-config", str(conf),
+        "--alerts-config",
+        _prefs_file(tmp_path, "quiet_hours:\n  enabled: true\n  start: 8\n  end: 12\n"),
+    )
+    assert "quiet hours" in capsys.readouterr().out
+
+
+def test_ignore_quiet_hours_still_overrides_the_file(checkable, tmp_path, capsys):
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    run_check(
+        checkable, "--notify", "--dry-run", "--ignore-quiet-hours",
+        "--notify-config", str(conf),
+        "--alerts-config",
+        _prefs_file(tmp_path, "quiet_hours:\n  enabled: true\n  start: 8\n  end: 12\n"),
+    )
+    assert "quiet hours" not in capsys.readouterr().out
+
+
+def test_a_missing_alerts_file_changes_nothing(checkable, tmp_path, capsys):
+    """The defaults are exactly the behaviour before D4 existed."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    code = run_check(
+        checkable, "--notify", "--dry-run", "--notify-config", str(conf),
+        "--alerts-config", str(tmp_path / "absent.yaml"),
+    )
+    assert code == 2
+    assert "[interrupt]" in capsys.readouterr().out
+
+
+def test_an_unreadable_alerts_file_refuses_rather_than_alerting_on_everything(
+    checkable, tmp_path, capsys
+):
+    """A file this tool cannot read is one whose author believes something is
+    switched off. Guessing the opposite is how a mute becomes a 3am buzz."""
+    conf = tmp_path / "notify.yaml"
+    conf.write_text(NOTIFY_YAML)
+    code = run_check(
+        checkable, "--notify", "--dry-run", "--notify-config", str(conf),
+        "--alerts-config", _prefs_file(tmp_path, 'mute_until: "2025-12-01T00:00"\n'),
+    )
+    assert code == 1
+    assert "offset" in capsys.readouterr().err
+
+
+def test_doctor_says_when_alerts_are_muted(tmp_path, capsys, monkeypatch):
+    """Without this line, "I stopped getting alerts" and "I muted it on Sunday
+    and forgot" are the same symptom."""
+    (tmp_path / "alerts.yaml").write_text('mute_until: "2099-01-01T00:00+00:00"\n')
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "league.yaml").write_text(
+        (FIXTURES.parent.parent / "league.example.yaml").read_text()
+    )
+    main(["doctor", "--config", str(tmp_path / "league.yaml"),
+          "--alerts-config", str(tmp_path / "alerts.yaml")])
+    out = capsys.readouterr().out
+    assert "MUTED until" in out
+
+
+def test_doctor_names_the_kinds_that_will_not_alert(tmp_path, capsys, monkeypatch):
+    (tmp_path / "alerts.yaml").write_text("kinds:\n  bye_next_week: off\n")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "league.yaml").write_text(
+        (FIXTURES.parent.parent / "league.example.yaml").read_text()
+    )
+    main(["doctor", "--config", str(tmp_path / "league.yaml"),
+          "--alerts-config", str(tmp_path / "alerts.yaml")])
+    assert "bye_next_week" in capsys.readouterr().out

@@ -21,10 +21,10 @@ split_threshold: 8
 
 | | |
 |---|---|
-| **Date** | 2026-09-03 |
-| **Branch** | `e6-inactives-sweep` · PR: — (10 merged) |
-| **Tests** | 683 Python + 110 JS, all green · CI gates both on every PR |
-| **Phase** | **C 7/7, D 3/5, E 5/6, F 3/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, reports its own failure, and now catches the one problem that only exists in the last ninety minutes. The Week page is the front door; installing the scheduler waits on the iMac. Next: the first real run after Monday's draft, then D4/F2 (per-alert control) and E4 (delivery fallback) |
+| **Date** | 2026-09-04 |
+| **Branch** | `d4-f2-alert-control` · PR: — (12 merged) |
+| **Tests** | 726 Python + 130 JS, all green · CI gates both on every PR |
+| **Phase** | **C 7/7, D 4/5, E 5/6, F 4/5.** Detection runs, delivers to a real phone (verified 2026-09-04), does not repeat itself, leaves a trace, reports its own failure, catches the one problem that only exists in the last ninety minutes — and is now **controllable**: the Alerts page switches kinds off, sets quiet hours, and mutes with an expiry, and both `doctor` and the health panel say when it has been silenced. Installing the scheduler waits on the iMac. Next: the first real run after Monday's draft (E6 has never seen a live `injuryStatus` string), then E4 |
 | **V1 goal** | ✅ *A tool I actually want to use: I can see my team's situation at a glance, control what notifies me, trust the alerts I get, and diagnose it when it misbehaves.* |
 | **Biggest blocker** | [R-4](#7-roadblocks) — **first Week 1 kickoff is Wed 2026-09-09 20:20 ET** and nothing in D/E/F exists. R-1 is closed. |
 
@@ -115,7 +115,7 @@ flowchart LR
         D1["D1 Notifier + ntfy<br/>DONE"]:::confirmed
         D2["D2 message rendering"]:::confirmed
         D3["D3 quiet hours + 2-strike<br/>DONE"]:::confirmed
-        D4["D4 alert control config"]:::confirmed
+        D4["D4 alert control config<br/>DONE"]:::confirmed
         D5["D5 channel bake-off"]:::confirmed
     end
     subgraph SE["E · Reliability"]
@@ -131,7 +131,7 @@ flowchart LR
         direction TB
         F0["F0 ffcoach serve<br/>DONE"]:::confirmed
         F1["F1 week page<br/>DONE · landing page"]:::confirmed
-        F2["F2 notification control UI"]:::confirmed
+        F2["F2 notification control UI<br/>DONE"]:::confirmed
         F3["F3 health panel<br/>DONE"]:::confirmed
         F4["F4 alert history view"]:::proposed
     end
@@ -185,7 +185,7 @@ flowchart LR
 | D1 | `Notifier` interface + **ntfy** | Done | 🟢 V1 | — | C7 | M | D-016, D-042, **D-057, D-058** | ✅ 2026-09-03 |
 | D2 | Message rendering (~~160-char SMS budget~~) | Done | 🟢 V1 | — | D1 | L | D-017, **D-059** | ✅ 2026-09-03 |
 | D3 | Quiet hours + two-strike repeat policy | Done | 🟢 V1 | — | D1 | M | D-018, D-019, D-057, **D-060, D-061** | ✅ 2026-09-03 |
-| D4 | Per-alert enable / tier / threshold config | Backlog | 🟢 V1 | Week 1 | D1 | L | D-020 | ✅ 2026-08-29 |
+| D4 | Per-alert enable + quiet hours + mute (**no tier, no threshold**) | Done | 🟢 V1 | — | D1 | L | D-020, **D-077, D-078** | ✅ 2026-09-04 |
 | D5 | Channel bake-off — `ffcoach notify --test` shipped with D1 | Backlog | 🔵 V1-nice | — | D1 | L | D-042 | ✅ 2026-08-29 |
 | E1 | **Structured run logging** (JSONL + SQLite history) | Done | 🟢 V1 | — | D1 | M | D-021, D-041, **D-062** | ✅ 2026-09-04 |
 | E2 | `launchd` install (`ffcoach schedule`) | Done | 🟢 V1 | — | D1, E1 | **H** | D-022, **D-064** | ✅ 2026-09-04 |
@@ -195,7 +195,7 @@ flowchart LR
 | E6 | Inactives sweep (~90m pre-kickoff) | Done | 🟢 V1 | — | E2 | M | D-026, **D-075, D-076** | ✅ 2026-09-04 |
 | F0 | **`ffcoach serve` — local web server** | Done | 🟢 V1 | — | — | L | D-040, **D-071** | ✅ 2026-09-04 |
 | F1 | Week dashboard — **is the landing page** | Done | 🟢 V1 | — | C4 | M | D-027, D-028, D-051, **D-066** | ✅ 2026-09-04 |
-| F2 | Notification control UI (writes config) | Backlog | 🟢 V1 | — | D4, F0 | M | D-020, D-040 | ✅ 2026-08-29 |
+| F2 | Notification control UI (writes `alerts.yaml`) | Done | 🟢 V1 | — | D4, F0 | M | D-020, D-040, **D-077** | ✅ 2026-09-04 |
 | F3 | Data-source refresh / health panel | Done | 🟢 V1 | — | E1, F0 | L | **D-074** | ✅ 2026-09-04 |
 | F4 | Alert history view | Backlog | 🔵 V1-nice | — | E1, F0 | L | — | 🤖 |
 | G1 | ESPN + Sleeper projection sources (**two, not three**) | Backlog | 🔵 V1-nice | — | B3 | M | D-030, D-043 | ✅ 2026-08-29 |
@@ -210,8 +210,8 @@ flowchart LR
 | H5 | Vegas game context | Hold | 🟡 Hold | Sept 2026 | — | M | D-037, Q-3 | ✅ 2026-08-29 |
 | H6 | Multi-league support | Hold | 🟡 Hold | — | — | L | D-038 | ✅ 2026-08-29 |
 
-**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 3/5 (60%) · E 5/6 (83%) · F 3/5 (60%) · G 0/5 · H 0/6.
-**Overall:** 25/42 steps done (60%).
+**Stage rollup:** A 4/4 (100%) · B 4/4 (100%) · C 7/7 (100%) · D 4/5 (80%) · E 5/6 (83%) · F 4/5 (80%) · G 0/5 · H 0/6.
+**Overall:** 28/42 steps done (67%).
 
 > **On that percentage — it is now worse than it looks, twice over.** The 2026-08-31 review's
 > sharpest line was that it overstates user value, because until C7 lands the finished lineup
@@ -352,6 +352,9 @@ flowchart LR
 
 - **D-075 — Doubt is a finding only inside the window, and only there.** ✅ *(2026-09-04)*. D-010 kept QUESTIONABLE and DOUBTFUL out of `is_certainly_out`, which was right and left them producing nothing at all. Most Questionable players play, so benching one on Wednesday loses points more often than it saves them — but ninety minutes before the slot locks the NFL has published its inactives, the answer exists, and the swap is still legal. `at_risk` is therefore the only opening whose *existence* depends on `now`. Three consequences: the window tracks the **slot's lock, not the kickoff** (under a weekly lock a Sunday starter froze on Thursday, so his own kickoff is the wrong clock); `RosterEntry.is_uncertain` treats an **unrecognized status as doubt**, because ESPN has renamed fields under this project twice and reading a new designation as healthy would drop a starter out of the only check that runs while he is still swappable; and it **reports even when the bench cannot cover it**, since a claim cannot process inside ninety minutes but an ESPN free agent can be added instantly — `plan_fix` already emits `ADD_BEFORE_LOCK` saying exactly that. `at_risk` sorts above `bye` despite being less certain, because its slot freezes sooner and a bye slot stays changeable until the week's last kickoff, so severity and deadline ordering agree. *Affects: E6, D4.*
 - **D-076 — A replacement whose game has kicked off is not a replacement.** ✅ *(2026-09-04)*. Found by a test while building the sweep, and structurally invisible until a check ran mid-week: every earlier check ran days ahead, when no game had started. `plan_fix` takes the earliest of the replacements' locks, so the *deadline* was already right and the finding merely went unactionable — which is the misleading part. A Sunday-afternoon backup offered for a Monday-night starter turns a problem the user could still fix (add a free agent before kickoff) into one that reads as too late, at exactly the moment the tool is most useful. `find_replacements` and `find_ir_candidates` gained an optional `now`; it is optional because `find_upcoming_byes` asks about *next* week, where this week's clock says nothing. Also drove `assign_replacements(priorities=)`: with `at_risk` in the mix, a certain zero and a maybe can want the same last bench player, and the tie previously fell to input order. Constraint still comes first — a slot with one option must get it — and certainty only breaks a genuine collision. *Affects: E6, C1.*
+
+- **D-077 — Alert preferences live in their own file, not in `notify.yaml`.** ✅ *(2026-09-04)*. F2's page writes config over HTTP, and `notify.yaml` holds the ntfy topic — which **is** the credential (D-058). Putting the switches in that file would mean a request reaching the write endpoint could redirect where alerts go; putting them in `alerts.yaml` means that class of bug does not exist to be defended against, and the test asserting the topic never appears in the payload is asserting a *structure* rather than an intention. Same instinct that already keeps `espn.yaml` out of `league.yaml`. Two consequences follow. The file records what is switched **off**, never what is on, so a kind this build has not heard of still alerts: the failure this product exists to prevent is silence, so an unrecognized kind must cost a message you did not need rather than one you did — the same closed-list reasoning as `HEALTHY` in D-075. And a **mute is an instant, never a flag**: every preset on the page lands on a moment that arrives by itself, because a permanent mute set in September is a silent November. An unreadable `alerts.yaml` **refuses the run** rather than defaulting to alerting on everything — a file this tool cannot parse is one whose author believes something is switched off. D4 also runs strictly *before* D3, so a switched-off kind never spends a strike on its way to being suppressed. *Affects: D4, F2, D3, E5.*
+- **D-078 — Silence you asked for still has to be visible.** ✅ *(2026-09-04)*. D4 introduced the first way to make this tool deliberately quiet, and quiet is the exact symptom the dead-man's switch (D-023, D-063) exists to distinguish from failure. Without a counterweight, "I muted it on Sunday and forgot" and "the cookies expired" produce identical evidence. So a mute and any switched-off kinds are reported by **`doctor`** and by the **health panel**, where they drag the Alerts row to *unknown* rather than leaving a green tick — the D-074 rule that unknown is not healthy, applied to a state the user chose. Held findings still print their reason on every run, and a switched-off kind stays on the Week page and in `ffcoach check`: the preference governs the phone, never the check (the D-011 precedent for locked findings). Consequently a disabled kind is **never** recorded as a blind spot — we did look, and we did find it, so `all_clear` keeps meaning what D-054 says it means. *Affects: D4, F2, F3, E3.*
 
 ### Open — need a decision
 

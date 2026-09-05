@@ -38,6 +38,25 @@ export function alertsRow(payload) {
   if (!a.configured) {
     return { state: BAD, label: "Alerts", detail: a.reason || "not configured" };
   }
+  if (a.prefs_error) {
+    // An unreadable alerts.yaml stops `check` sending at all, so it belongs
+    // here and not on the Alerts page alone.
+    return { state: BAD, label: "Alerts", detail: a.prefs_error };
+  }
+  // D4 made silence something you can ask for. It must still be visible, or
+  // it is indistinguishable from the channel being broken -- which is the one
+  // confusion this whole panel exists to prevent.
+  if (a.muted_until) {
+    return { state: UNKNOWN, label: "Alerts", detail: `muted until ${a.muted_until}` };
+  }
+  const off = (a.kinds_off ?? []).length;
+  if (off) {
+    return {
+      state: UNKNOWN,
+      label: "Alerts",
+      detail: `${a.channel} configured · ${off} kind${off === 1 ? "" : "s"} switched off`,
+    };
+  }
   return { state: OK, label: "Alerts", detail: `${a.channel} configured` };
 }
 

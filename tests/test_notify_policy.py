@@ -16,7 +16,14 @@ from zoneinfo import ZoneInfo
 
 from ffcoach.advisors.lineup import LineupFinding
 from ffcoach.model.deadlines import FixKind, FixPlan
-from ffcoach.notify.policy import AlertRecord, QuietHours, alert_key, decide
+from ffcoach.config import AlertPrefs
+from ffcoach.notify.policy import (
+    AlertRecord,
+    QuietHours,
+    alert_key,
+    allowed_by_prefs,
+    decide,
+)
 
 ET = ZoneInfo("America/New_York")
 
@@ -243,3 +250,56 @@ def test_a_batch_sends_the_new_and_holds_the_exhausted():
                now=at(10, 1, 9), quiet=QUIET, tz=ET)
     assert sent(d) == ["Fresh Guy"]
     assert len(d.held) == 1
+
+
+# --- D4: what the user agreed to be interrupted about --------------------
+#
+# This runs *before* `decide`, and the order is the point: a kind you switched
+# off must not spend a strike on its way to being suppressed.
+
+
+def test_by_default_everything_is_allowed_through():
+    findings = [finding(), finding(kind="bye", player_name="Bye Guy")]
+    kept, held = allowed_by_prefs(findings, AlertPrefs(), at(10, 3, 11))
+    assert kept == findings
+    assert held == ()
+
+
+def test_a_switched_off_kind_does_not_send():
+    findings = [finding(), finding(kind="bye_next_week", player_name="Later Guy")]
+    prefs = AlertPrefs(disabled_kinds=frozenset({"bye_next_week"}))
+    kept, held = allowed_by_prefs(findings, prefs, at(10, 3, 11))
+    assert [f.player_name for f in kept] == ["Hurt Guy"]
+    assert len(held) == 1
+    assert "switched off" in held[0]
+
+
+def test_every_suppression_says_why():
+    """The rule the whole module lives by: a message you did not get needs a
+    visible cause, or the next silent week is unexplainable."""
+    prefs = AlertPrefs(disabled_kinds=frozenset({"out"}))
+    _, held = allowed_by_prefs([finding()], prefs, at(10, 3, 11))
+    assert "Hurt Guy" in held[0]
+
+
+def test_a_mute_holds_everything_and_names_when_it_lifts():
+    prefs = AlertPrefs(mute_until=at(10, 5, 9))
+    kept, held = allowed_by_prefs([finding(), finding()], prefs, at(10, 3, 11))
+    assert kept == []
+    assert len(held) == 1 and "muted until" in held[0]
+
+
+def test_a_lapsed_mute_stops_holding_anything():
+    prefs = AlertPrefs(mute_until=at(10, 3, 10))
+    kept, _ = allowed_by_prefs([finding()], prefs, at(10, 3, 11))
+    assert len(kept) == 1
+
+
+def test_a_switched_off_kind_never_reaches_decide_and_so_spends_no_strike():
+    """The reason D4 runs first. If a preference could consume a strike, a
+    kind switched off in September would arrive with none left in November."""
+    prefs = AlertPrefs(disabled_kinds=frozenset({"out"}))
+    now = at(10, 3, 11)
+    kept, _ = allowed_by_prefs([finding()], prefs, now)
+    plan = decide(kept, 5, {}, now, QuietHours(enabled=False), ET)
+    assert plan.keys_sent == ()
